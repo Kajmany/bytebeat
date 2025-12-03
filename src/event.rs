@@ -1,3 +1,4 @@
+use crate::pipewire::AudioEvent;
 use color_eyre::eyre::WrapErr;
 use crossterm::event::{self, Event as CrosstermEvent};
 use std::thread;
@@ -6,12 +7,7 @@ use std::{sync::mpsc, time::Duration};
 #[derive(Clone, Debug)]
 pub enum Event {
     Crossterm(CrosstermEvent),
-    App(AppEvent),
-}
-
-#[derive(Clone, Debug)]
-pub enum AppEvent {
-    Foo,
+    Audio(AudioEvent),
 }
 
 /// Terminal event handler.
@@ -49,14 +45,21 @@ impl EventHandler {
         Ok(self.receiver.recv()?)
     }
 
-    /// Queue an app event to be sent to the event receiver.
-    ///
-    /// This is useful for sending events to the event handler which will be processed by the next
-    /// iteration of the application's event loop.
-    pub fn send(&mut self, app_event: AppEvent) {
-        // Ignore the result as the reciever cannot be dropped while this struct still has a
-        // reference to it
-        let _ = self.sender.send(Event::App(app_event));
+    // Queue an app event to be sent to the event receiver.
+    //
+    // This is useful for sending events to the event handler which will be processed by the next
+    // iteration of the application's event loop.
+    //pub fn send(&mut self, app_event: Event) {
+    //    // Ignore the result as the reciever cannot be dropped while this struct still has a
+    //    // reference to it
+    //    let _ = self.sender.send(Event::App(app_event));
+    //}
+
+    /// Get a sender handler, intended for other threads that wish to send events to the
+    /// [`crate::tui::App`]
+    // TODO: Should we encapsulate this at a higher level?
+    pub fn get_sender(&self) -> mpsc::Sender<Event> {
+        self.sender.clone()
     }
 }
 

@@ -1,13 +1,19 @@
+use std::thread;
+
 use color_eyre::Result;
 use crossterm::event::{KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Alignment, Rect},
+    text::Line,
     widgets::{Block, BorderType, Paragraph, Widget},
 };
 
-use crate::event::{Event, EventHandler};
+use crate::{
+    event::{Event, EventHandler},
+    pipewire::StreamStatus,
+};
 
 pub fn main() -> Result<()> {
     let terminal = ratatui::init();
@@ -21,13 +27,19 @@ pub fn main() -> Result<()> {
 pub struct App {
     pub running: bool,
     pub events: EventHandler,
+    pub audio_state: StreamStatus,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let events = EventHandler::new();
+        let event_tx = events.get_sender();
+        // TODO: Do we need to watch this better?
+        thread::spawn(move || crate::pipewire::main(event_tx));
         Self {
             running: true,
-            events: EventHandler::new(),
+            events,
+            audio_state: StreamStatus::Unconnected,
         }
     }
 }
@@ -53,7 +65,9 @@ impl App {
                 }
                 _ => {}
             },
-            _ => {}
+            Event::Audio(crate::pipewire::AudioEvent::StateChange(event)) => {
+                self.audio_state = event
+            }
         }
         Ok(())
     }
@@ -62,7 +76,7 @@ impl App {
         self.quit();
     }
 
-    // Causes break and clean exit on next `run` loop
+    /// Causes break and clean exit on next [`App::run`] loop
     pub fn quit(&mut self) {
         self.running = false;
     }
@@ -71,10 +85,20 @@ impl App {
 // TODO: break out to UI module when it gets too complicated
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let stream_status = match self.audio_state {
+            StreamStatus::Error => "Stream Status: Error!",
+            StreamStatus::Unconnected => "Stream Status: Unconnected",
+            StreamStatus::Connecting => "Stream Status: Connecting",
+            StreamStatus::Paused => "Stream Status: Paused",
+            StreamStatus::Streaming => "Stream Status: Streaming",
+        };
+        let status = Line::raw(stream_status);
+
         let block = Block::bordered()
-            .title("{{project-name}}")
+            .title(" bytebeat   ")
             .title_alignment(Alignment::Left)
-            .border_type(BorderType::Rounded);
+            .border_type(BorderType::Rounded)
+            .title_bottom(status);
 
         let paragraph = Paragraph::new("Test text, please ignore.")
             .block(block)

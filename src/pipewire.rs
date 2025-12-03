@@ -1,14 +1,50 @@
+use std::sync::mpsc;
+
 use pipewire::{
-    self as pw, spa,
-    spa::utils::Direction,
-    stream::{Stream, StreamFlags},
+    self as pw,
+    spa::{self, utils::Direction},
+    stream::{Stream, StreamFlags, StreamState},
 };
 use pw::properties::properties;
+
+use crate::event::Event;
 
 const CHANNELS: usize = 2;
 const STRIDE: usize = size_of::<u8>() * CHANNELS;
 
-pub fn main() -> Result<(), pw::Error> {
+#[derive(Clone, Debug)]
+pub enum AudioEvent {
+    StateChange(StreamStatus),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Remapping of [`pipewire::stream::StreamState`] that can be cloned.
+pub enum StreamStatus {
+    /// the stream is in error
+    Error,
+    /// unconnected
+    Unconnected,
+    /// connection is in progress
+    Connecting,
+    /// paused
+    Paused,
+    /// streaming
+    Streaming,
+}
+
+#[derive(Debug, Clone)]
+struct AudioState {
+    pub t: u64,
+    pub event_tx: mpsc::Sender<Event>,
+}
+
+impl AudioState {
+    pub fn new(event_tx: mpsc::Sender<Event>) -> AudioState {
+        AudioState { t: 0, event_tx }
+    }
+}
+
+pub fn main(event_tx: mpsc::Sender<Event>) -> Result<(), pw::Error> {
     pw::init();
     let main_loop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&main_loop, None)?;
@@ -25,15 +61,25 @@ pub fn main() -> Result<(), pw::Error> {
         },
     )?;
 
-    let data: u64 = 0;
+    let state = AudioState::new(event_tx);
+    let glorious_eternal_state: &'static mut AudioState = Box::leak(Box::new(state));
     let _listener = stream
-        .add_local_listener_with_user_data(data)
-        .process(on_process)
-        .state_changed(|_, _, old, new| {
-            //println!("State changed: {:?} -> {:?}", old, new);
+        .add_local_listener_with_user_data(glorious_eternal_state)
+        .process(|s, state| on_process(s, *state))
+        .state_changed(|_, state, _, new| {
+            // TODO: Have a sense of shame. Do better.
+            let new_state = match new {
+                StreamState::Error(_) => StreamStatus::Error,
+                StreamState::Unconnected => StreamStatus::Unconnected,
+                StreamState::Connecting => StreamStatus::Connecting,
+                StreamState::Paused => StreamStatus::Paused,
+                StreamState::Streaming => StreamStatus::Streaming,
+            };
+            state
+                .event_tx
+                .send(Event::Audio(AudioEvent::StateChange(new_state)));
         })
         .register()?;
-    //println!("Created stream {:#?}", stream);
 
     // Twiddle our audio settings
     use spa::param::audio;
@@ -72,7 +118,8 @@ pub fn main() -> Result<(), pw::Error> {
     Ok(())
 }
 
-fn on_process(s: &Stream, data: &mut u64) {
+fn on_process(s: &Stream, state: &mut AudioState) {
+    let t = &mut state.t;
     match s.dequeue_buffer() {
         None => println!("Got no buffer!"),
         Some(mut buffer) => {
@@ -82,9 +129,9 @@ fn on_process(s: &Stream, data: &mut u64) {
                 //println!("Buffer with room for {}", n_frames);
                 for i in 0..n_frames {
                     // First gen the frame
-                    let value = (*data * (42 & *data >> 10)) as u8;
-                    //let value = (5 * *data & *data >> 7 | 3 * *data & *data >> 10) as u8;
-                    *data += 1;
+                    //let value = (*t * (42 & *t >> 10)) as u8;
+                    let value = (5 * *t & *t >> 7 | 3 * *t & *t >> 10) as u8;
+                    *t += 1;
 
                     // Copy it across strides
                     for c in 0..CHANNELS {
