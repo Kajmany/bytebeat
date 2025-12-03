@@ -1,6 +1,7 @@
 use color_eyre::Result;
 
 mod event;
+mod parser;
 mod pipewire;
 mod tui;
 
