@@ -5,9 +5,8 @@ use crossterm::event::{KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
-    layout::{Alignment, Rect},
-    text::Line,
-    widgets::{Block, BorderType, Paragraph, Widget},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
 use crate::{
@@ -85,25 +84,38 @@ impl App {
 // TODO: break out to UI module when it gets too complicated
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let stream_status = match self.audio_state {
-            StreamStatus::Error => "Stream Status: Error!",
-            StreamStatus::Unconnected => "Stream Status: Unconnected",
-            StreamStatus::Connecting => "Stream Status: Connecting",
-            StreamStatus::Paused => "Stream Status: Paused",
-            StreamStatus::Streaming => "Stream Status: Streaming",
-        };
-        let status = Line::raw(stream_status);
-
-        let block = Block::bordered()
+        let main_block = Block::bordered()
             .title(" bytebeat   ")
             .title_alignment(Alignment::Left)
-            .border_type(BorderType::Rounded)
-            .title_bottom(status);
+            .border_type(BorderType::Rounded);
 
-        let paragraph = Paragraph::new("Test text, please ignore.")
-            .block(block)
-            .centered();
+        let main_interior = Layout::default()
+            .direction(Direction::Vertical)
+            // One big widget area, and a little bottom bar
+            .constraints(vec![Constraint::Percentage(100), Constraint::Min(2)])
+            .split(main_block.inner(area));
 
-        paragraph.render(area, buf);
+        let status_block = Block::new()
+            .borders(Borders::TOP)
+            .border_type(BorderType::Plain);
+
+        let stream_status = match self.audio_state {
+            StreamStatus::Error => "Audio: Error!",
+            StreamStatus::Unconnected => "Audio: Unconnected",
+            StreamStatus::Connecting => "Audio: Connecting",
+            StreamStatus::Paused => "Audio: Paused",
+            StreamStatus::Streaming => "Audio: Streaming",
+        };
+
+        main_block.render(area, buf);
+        // Dummy text (for now)
+        Paragraph::new("Test text, please ignore.")
+            .centered()
+            .render(main_interior[0], buf);
+        // Status bar text must be rendered before status bar
+        Paragraph::new(stream_status)
+            .centered()
+            .render(status_block.inner(main_interior[1]), buf);
+        status_block.render(main_interior[1], buf);
     }
 }
