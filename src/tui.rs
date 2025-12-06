@@ -4,6 +4,7 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
     widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
@@ -64,7 +65,7 @@ impl App {
         match event.code {
             // We can always exit
             KeyCode::F(3) => self.quit(),
-            KeyCode::Char('p') => self.toggle_playback(),
+            KeyCode::Char('p') | KeyCode::Char('P') => self.toggle_playback(),
             _ => {} //TODO: This
         }
     }
@@ -94,10 +95,17 @@ impl App {
 // TODO: break out to UI module when it gets too complicated
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let mut control_str: String = " <F3>: Quit | <P>: ".to_owned();
+        match self.paused {
+            true => control_str.push_str("Play "),
+            false => control_str.push_str("Pause "),
+        };
+
         let main_block = Block::bordered()
             .title(" bytebeat   ")
             .title_alignment(Alignment::Left)
-            .border_type(BorderType::Rounded);
+            .border_type(BorderType::Rounded)
+            .title_bottom(control_str);
 
         let main_interior = Layout::default()
             .direction(Direction::Vertical)
@@ -125,6 +133,7 @@ impl Widget for &mut App {
         // Status bar text must be rendered before status bar
         Paragraph::new(stream_status)
             .centered()
+            .style(Style::default().add_modifier(Modifier::BOLD))
             .render(status_block.inner(main_interior[1]), buf);
         status_block.render(main_interior[1], buf);
     }
