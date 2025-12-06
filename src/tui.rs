@@ -1,7 +1,5 @@
-use std::thread;
-
 use color_eyre::Result;
-use crossterm::event::{KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
@@ -10,42 +8,31 @@ use ratatui::{
 };
 
 use crate::{
+    audio::{AudioEvent, StreamStatus},
     event::{Event, EventHandler},
-    pipewire::StreamStatus,
 };
 
-pub fn main() -> Result<()> {
+pub fn main(events: EventHandler) -> Result<()> {
     let terminal = ratatui::init();
-    let result = App::new().run(terminal);
+    let result = App::new(events).run(terminal);
     ratatui::restore();
 
     result
 }
 
-#[derive(Debug)]
 pub struct App {
     pub running: bool,
     pub events: EventHandler,
     pub audio_state: StreamStatus,
 }
 
-impl Default for App {
-    fn default() -> Self {
-        let events = EventHandler::new();
-        let event_tx = events.get_sender();
-        // TODO: Do we need to watch this better?
-        thread::spawn(move || crate::pipewire::main(event_tx));
+impl App {
+    pub fn new(events: EventHandler) -> Self {
         Self {
             running: true,
             events,
             audio_state: StreamStatus::Unconnected,
         }
-    }
-}
-
-impl App {
-    pub fn new() -> Self {
-        Self::default()
     }
 
     pub fn run(mut self, mut term: DefaultTerminal) -> Result<()> {
@@ -64,19 +51,26 @@ impl App {
                 }
                 _ => {}
             },
-            Event::Audio(crate::pipewire::AudioEvent::StateChange(event)) => {
-                self.audio_state = event
-            }
+            Event::Audio(AudioEvent::StateChange(event)) => self.audio_state = event,
         }
         Ok(())
     }
 
-    fn handle_key_event(&mut self, _event: KeyEvent) {
-        self.quit();
+    fn handle_key_event(&mut self, event: KeyEvent) {
+        match event.code {
+            // We can always exit
+            KeyCode::F(3) => self.quit(),
+            KeyCode::Char('p') => self.toggle_playback(),
+            _ => {} //TODO: This
+        }
+    }
+
+    fn toggle_playback(&self) {
+        self.events.toggle_playback();
     }
 
     /// Causes break and clean exit on next [`App::run`] loop
-    pub fn quit(&mut self) {
+    fn quit(&mut self) {
         self.running = false;
     }
 }

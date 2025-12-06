@@ -1,4 +1,4 @@
-use crate::pipewire::AudioEvent;
+use crate::audio::{AudioCommand, AudioEvent};
 use color_eyre::eyre::WrapErr;
 use crossterm::event::{self, Event as CrosstermEvent};
 use std::thread;
@@ -11,68 +11,72 @@ pub enum Event {
 }
 
 /// Terminal event handler.
-#[derive(Debug)]
 pub struct EventHandler {
-    sender: mpsc::Sender<Event>,
-    receiver: mpsc::Receiver<Event>,
-}
+    term_sender: mpsc::Sender<Event>,
+    term_receiver: mpsc::Receiver<Event>,
 
-impl Default for EventHandler {
-    fn default() -> Self {
-        EventHandler::new()
-    }
+    audio_sender: pipewire::channel::Sender<AudioCommand>,
 }
 
 impl EventHandler {
     /// Constructs a new instance of [`EventHandler`] and spawns a new thread to handle events.
-    pub fn new() -> Self {
-        let (sender, receiver) = mpsc::channel();
-        let actor = EventThread::new(sender.clone());
+    pub fn new(audio_sender: pipewire::channel::Sender<AudioCommand>) -> Self {
+        let (term_sender, term_receiver) = mpsc::channel();
+        let actor = EventThread::new(term_sender.clone());
         thread::spawn(|| actor.run());
-        Self { sender, receiver }
+        Self {
+            term_sender,
+            term_receiver,
+            audio_sender,
+        }
     }
 
-    /// Receives an event from the sender.
+    /// Receives an event from the term_sender.
     ///
     /// This function blocks until an event is received.
     ///
     /// # Errors
     ///
-    /// This function returns an error if the sender channel is disconnected. This can happen if an
+    /// This function returns an error if the term_sender channel is disconnected. This can happen if an
     /// error occurs in the event thread. In practice, this should not happen unless there is a
     /// problem with the underlying terminal.
     pub fn next(&self) -> color_eyre::Result<Event> {
-        Ok(self.receiver.recv()?)
+        Ok(self.term_receiver.recv()?)
     }
 
-    // Queue an app event to be sent to the event receiver.
+    // Queue an app event to be sent to the event term_receiver.
     //
     // This is useful for sending events to the event handler which will be processed by the next
     // iteration of the application's event loop.
     //pub fn send(&mut self, app_event: Event) {
     //    // Ignore the result as the reciever cannot be dropped while this struct still has a
     //    // reference to it
-    //    let _ = self.sender.send(Event::App(app_event));
+    //    let _ = self.term_sender.send(Event::App(app_event));
     //}
 
-    /// Get a sender handler, intended for other threads that wish to send events to the
+    /// Get a term_sender handler, intended for other threads that wish to send events to the
     /// [`crate::tui::App`]
     // TODO: Should we encapsulate this at a higher level?
-    pub fn get_sender(&self) -> mpsc::Sender<Event> {
-        self.sender.clone()
+    pub fn get_term_sender(&self) -> mpsc::Sender<Event> {
+        self.term_sender.clone()
+    }
+
+    pub fn toggle_playback(&self) {
+        let _ = self.audio_sender.send(AudioCommand::StreamToggle);
     }
 }
 
 /// A thread that handles reading crossterm events and emitting tick events on a regular schedule.
+// TODO: This is maybe useless unless we want ticks later
 struct EventThread {
-    /// Event sender channel.
-    sender: mpsc::Sender<Event>,
+    /// Event term_sender channel.
+    term_sender: mpsc::Sender<Event>,
 }
 
 impl EventThread {
     /// Constructs a new instance of [`EventThread`].
-    fn new(sender: mpsc::Sender<Event>) -> Self {
-        Self { sender }
+    fn new(term_sender: mpsc::Sender<Event>) -> Self {
+        Self { term_sender }
     }
 
     /// Runs the event thread.
@@ -91,8 +95,8 @@ impl EventThread {
     }
 
     fn send(&self, event: Event) {
-        // Ignores the result because shutting down the app drops the receiver, which causes the send
+        // Ignores the result because shutting down the app drops the term_receiver, which causes the send
         // operation to fail. This is expected behavior and should not panic.
-        let _ = self.sender.send(event);
+        let _ = self.term_sender.send(event);
     }
 }

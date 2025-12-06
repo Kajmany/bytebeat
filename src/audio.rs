@@ -2,6 +2,8 @@ use std::sync::mpsc;
 
 use pipewire::{
     self as pw,
+    context::ContextRc,
+    main_loop::MainLoopRc,
     spa::{self, utils::Direction},
     stream::{Stream, StreamFlags, StreamState},
 };
@@ -32,26 +34,40 @@ pub enum StreamStatus {
     Streaming,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
+pub enum AudioCommand {
+    StreamToggle,
+}
+
 struct AudioState {
     pub t: u64,
     pub event_tx: mpsc::Sender<Event>,
+    pub paused: bool,
 }
 
 impl AudioState {
     pub fn new(event_tx: mpsc::Sender<Event>) -> AudioState {
-        AudioState { t: 0, event_tx }
+        AudioState {
+            t: 0,
+            event_tx,
+            paused: false,
+        }
     }
 }
 
-pub fn main(event_tx: mpsc::Sender<Event>) -> Result<(), pw::Error> {
+pub fn main(
+    event_tx: mpsc::Sender<Event>,
+    command_rx: pipewire::channel::Receiver<AudioCommand>,
+) -> Result<(), pw::Error> {
+    let state = AudioState::new(event_tx);
     pw::init();
-    let main_loop = pw::main_loop::MainLoopRc::new(None)?;
-    let context = pw::context::ContextRc::new(&main_loop, None)?;
+    let main_loop: &'static mut MainLoopRc = Box::leak(Box::new(MainLoopRc::new(None)?));
+    let context: &'static mut ContextRc =
+        Box::leak(Box::new(pw::context::ContextRc::new(main_loop, None)?));
     let core = context.connect_rc(None)?;
 
-    let stream = pw::stream::StreamBox::new(
-        &core,
+    let stream = pw::stream::StreamRc::new(
+        core,
         "audio-src",
         properties! {
             *pw::keys::MEDIA_TYPE => "Audio",
@@ -61,11 +77,17 @@ pub fn main(event_tx: mpsc::Sender<Event>) -> Result<(), pw::Error> {
         },
     )?;
 
-    let state = AudioState::new(event_tx);
-    let glorious_eternal_state: &'static mut AudioState = Box::leak(Box::new(state));
+    // TODO: Suffer.
+    //command_rx.attach(main_loop.loop_(), move |msg| match msg {
+    //    AudioCommand::StreamToggle => match state.paused {
+    //        true => stream.set_active(true).unwrap(),
+    //        false => stream.set_active(false).unwrap(),
+    //    },
+    //});
+
     let _listener = stream
-        .add_local_listener_with_user_data(glorious_eternal_state)
-        .process(|s, state| on_process(s, *state))
+        .add_local_listener_with_user_data(state)
+        .process(on_process)
         .state_changed(|_, state, _, new| {
             // TODO: Have a sense of shame. Do better.
             let new_state = match new {
@@ -75,7 +97,8 @@ pub fn main(event_tx: mpsc::Sender<Event>) -> Result<(), pw::Error> {
                 StreamState::Paused => StreamStatus::Paused,
                 StreamState::Streaming => StreamStatus::Streaming,
             };
-            state
+            // TODO: probably okay but why
+            let _ = state
                 .event_tx
                 .send(Event::Audio(AudioEvent::StateChange(new_state)));
         })
@@ -126,11 +149,10 @@ fn on_process(s: &Stream, state: &mut AudioState) {
             // We may get a valid buffer that is 0-sized(?)
             let n_frames = if let Some(slice) = buffer.datas_mut()[0].data() {
                 let n_frames = slice.len() / STRIDE;
-                //println!("Buffer with room for {}", n_frames);
                 for i in 0..n_frames {
                     // First gen the frame
                     //let value = (*t * (42 & *t >> 10)) as u8;
-                    let value = (5 * *t & *t >> 7 | 3 * *t & *t >> 10) as u8;
+                    let value = ((5 * *t) & (*t >> 7) | (3 * *t) & (*t >> 10)) as u8;
                     *t += 1;
 
                     // Copy it across strides
