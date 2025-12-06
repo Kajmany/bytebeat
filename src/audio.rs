@@ -36,22 +36,18 @@ pub enum StreamStatus {
 
 #[derive(Clone, Debug)]
 pub enum AudioCommand {
-    StreamToggle,
+    Play,
+    Pause,
 }
 
 struct AudioState {
     pub t: u64,
     pub event_tx: mpsc::Sender<Event>,
-    pub paused: bool,
 }
 
 impl AudioState {
     pub fn new(event_tx: mpsc::Sender<Event>) -> AudioState {
-        AudioState {
-            t: 0,
-            event_tx,
-            paused: false,
-        }
+        AudioState { t: 0, event_tx }
     }
 }
 
@@ -77,13 +73,13 @@ pub fn main(
         },
     )?;
 
-    // TODO: Suffer.
-    //command_rx.attach(main_loop.loop_(), move |msg| match msg {
-    //    AudioCommand::StreamToggle => match state.paused {
-    //        true => stream.set_active(true).unwrap(),
-    //        false => stream.set_active(false).unwrap(),
-    //    },
-    //});
+    // FIXME: Uhh, this is not robust
+    //   but it holds up to spamming toggle so it works for now...?
+    let stream2 = stream.clone();
+    let _recv = command_rx.attach(main_loop.loop_(), move |msg| match msg {
+        AudioCommand::Play => stream2.set_active(true).unwrap(),
+        AudioCommand::Pause => stream2.set_active(false).unwrap(),
+    });
 
     let _listener = stream
         .add_local_listener_with_user_data(state)
@@ -136,6 +132,7 @@ pub fn main(
         StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
         &mut params,
     )?;
+    stream.set_active(false)?;
 
     main_loop.run();
     Ok(())

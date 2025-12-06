@@ -23,6 +23,9 @@ pub fn main(events: EventHandler) -> Result<()> {
 pub struct App {
     pub running: bool,
     pub events: EventHandler,
+    // As we wish it.
+    pub paused: bool,
+    // May be streaming or paused, but also other things too
     pub audio_state: StreamStatus,
 }
 
@@ -31,6 +34,7 @@ impl App {
         Self {
             running: true,
             events,
+            paused: true,
             audio_state: StreamStatus::Unconnected,
         }
     }
@@ -65,8 +69,20 @@ impl App {
         }
     }
 
-    fn toggle_playback(&self) {
-        self.events.toggle_playback();
+    // Sync with actual stream state absolutely not guaranteed.
+    // TODO: if it matters, we can wait for a statechange event to change this
+    // and even debounce while waiting
+    fn toggle_playback(&mut self) {
+        match self.paused {
+            true => {
+                self.events.stream_play();
+                self.paused = false;
+            }
+            false => {
+                self.events.stream_pause();
+                self.paused = true;
+            }
+        };
     }
 
     /// Causes break and clean exit on next [`App::run`] loop

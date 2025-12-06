@@ -61,8 +61,12 @@ impl EventHandler {
         self.term_sender.clone()
     }
 
-    pub fn toggle_playback(&self) {
-        let _ = self.audio_sender.send(AudioCommand::StreamToggle);
+    pub fn stream_play(&self) {
+        let _ = self.audio_sender.send(AudioCommand::Play);
+    }
+
+    pub fn stream_pause(&self) {
+        let _ = self.audio_sender.send(AudioCommand::Pause);
     }
 }
 
