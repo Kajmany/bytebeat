@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::{cell::RefCell, rc::Rc, sync::mpsc};
 
 use pipewire::{
     self as pw,
@@ -55,7 +55,7 @@ pub fn main(
     event_tx: mpsc::Sender<Event>,
     command_rx: pipewire::channel::Receiver<AudioCommand>,
 ) -> Result<(), pw::Error> {
-    let state = AudioState::new(event_tx);
+    let state = Rc::new(RefCell::new(AudioState::new(event_tx)));
     pw::init();
     let main_loop: &'static mut MainLoopRc = Box::leak(Box::new(MainLoopRc::new(None)?));
     let context: &'static mut ContextRc =
@@ -73,12 +73,13 @@ pub fn main(
         },
     )?;
 
-    // FIXME: Uhh, this is not robust
+    // FIXME: Uhh, this is not robust w.r.t sync with App state
     //   but it holds up to spamming toggle so it works for now...?
-    let stream2 = stream.clone();
+    let _stream_cmd = stream.clone();
+    let _state_cmd = state.clone();
     let _recv = command_rx.attach(main_loop.loop_(), move |msg| match msg {
-        AudioCommand::Play => stream2.set_active(true).unwrap(),
-        AudioCommand::Pause => stream2.set_active(false).unwrap(),
+        AudioCommand::Play => _stream_cmd.set_active(true).unwrap(),
+        AudioCommand::Pause => _stream_cmd.set_active(false).unwrap(),
     });
 
     let _listener = stream
@@ -95,6 +96,7 @@ pub fn main(
             };
             // TODO: probably okay but why
             let _ = state
+                .borrow()
                 .event_tx
                 .send(Event::Audio(AudioEvent::StateChange(new_state)));
         })
@@ -138,7 +140,8 @@ pub fn main(
     Ok(())
 }
 
-fn on_process(s: &Stream, state: &mut AudioState) {
+fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
+    let mut state = state.borrow_mut();
     let t = &mut state.t;
     match s.dequeue_buffer() {
         None => println!("Got no buffer!"),
