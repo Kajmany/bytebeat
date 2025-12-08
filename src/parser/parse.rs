@@ -58,8 +58,9 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Op(op) => {
                 // Prefix operators handling (Unary minus, etc.)
                 let (_, right_bp) = match op {
-                    Operator::Minus => ((), 99),
-                    Operator::Plus => ((), 99), // Unary plus
+                    Operator::Minus | Operator::Plus | Operator::LogNot | Operator::BitNot => {
+                        ((), 99)
+                    }
                     _ => return Err(ParseError::UnexpectedPrefix(*op)),
                 };
 
@@ -74,6 +75,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                         self.push_node(ASTNode::Binary(Operator::Minus, zero, right))
                     }
                     Operator::Plus => right,
+                    Operator::LogNot => {
+                        let zero = self.push_node(ASTNode::Literal(0));
+                        self.push_node(ASTNode::Binary(Operator::LogNot, zero, right))
+                    }
+                    Operator::BitNot => {
+                        let zero = self.push_node(ASTNode::Literal(0));
+                        self.push_node(ASTNode::Binary(Operator::BitNot, zero, right))
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -129,14 +138,22 @@ impl<'a, 'b> Parser<'a, 'b> {
 fn binding_power(op: Operator) -> Option<(u8, u8)> {
     match op {
         // Multiplicative
-        Operator::Mul | Operator::Div | Operator::Mod => Some((60, 61)),
+        Operator::Mul | Operator::Div | Operator::Mod => Some((80, 81)),
         // Additive
-        Operator::Plus | Operator::Minus => Some((50, 51)),
+        Operator::Plus | Operator::Minus => Some((70, 71)),
         // Shifts
-        Operator::Lsh | Operator::Rsh => Some((40, 41)),
-        // Bitwise logic
-        Operator::And => Some((30, 31)),
-        Operator::Or => Some((20, 21)),
+        Operator::Lsh | Operator::Rsh => Some((60, 61)),
+        // Relational
+        Operator::Lt | Operator::Gt | Operator::Le | Operator::Ge => Some((50, 51)),
+        // Equality
+        Operator::Eq | Operator::Ne => Some((45, 46)),
+        // Bitwise
+        Operator::And => Some((40, 41)),
+        Operator::BitXor => Some((35, 36)),
+        Operator::Or => Some((30, 31)),
+        // Logical
+        Operator::LogAnd => Some((25, 26)),
+        Operator::LogOr => Some((20, 21)),
         _ => None,
     }
 }

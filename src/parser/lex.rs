@@ -1,4 +1,5 @@
 //! Simple lexer with 1-token lookahead that handles a subset of C relevant to classic bytebeat. Only intended for a single statement of 1+ expression.
+//! LLM SLOP PRESENCE: Modest (added the rest of the tokens)
 use std::{iter::Peekable, str::Chars};
 
 use super::{Operator, Token};
@@ -42,11 +43,58 @@ impl<'a> Lexer<'a> {
                     }
                     '&' => {
                         self.chars.next();
-                        Token::Op(Operator::And)
+                        if let Some('&') = self.chars.peek() {
+                            self.chars.next();
+                            Token::Op(Operator::LogAnd)
+                        } else {
+                            Token::Op(Operator::And)
+                        }
                     }
                     '|' => {
                         self.chars.next();
-                        Token::Op(Operator::Or)
+                        if let Some('|') = self.chars.peek() {
+                            self.chars.next();
+                            Token::Op(Operator::LogOr)
+                        } else {
+                            Token::Op(Operator::Or)
+                        }
+                    }
+                    '^' => {
+                        self.chars.next();
+                        Token::Op(Operator::BitXor)
+                    }
+                    '~' => {
+                        self.chars.next();
+                        Token::Op(Operator::BitNot)
+                    }
+                    '!' => {
+                        self.chars.next();
+                        if let Some('=') = self.chars.peek() {
+                            self.chars.next();
+                            Token::Op(Operator::Ne)
+                        } else {
+                            Token::Op(Operator::LogNot)
+                        }
+                    }
+                    '=' => {
+                        self.chars.next();
+                        if let Some('=') = self.chars.peek() {
+                            self.chars.next();
+                            Token::Op(Operator::Eq)
+                        } else {
+                            // Assignment not supported, or treat as error?
+                            // Lexer usually returns error or unexpected token?
+                            // User asked for ==.
+                            // Treat single = as unknown or error?
+                            // Current lexer panics or todo on unknown?
+                            // `_` arm handles atoms.
+                            // Lexer structure matches specific chars.
+                            // If I don't match `=`, it goes to `_` -> variable starting with `=`?
+                            // `Lexer::reserved_char` includes operators. I should add `=` to reserved chars.
+                            // But for now, if I match `=`, I expect `==`.
+                            // If not `==`, panic/todo?
+                            todo!("Assignment or single = not supported")
+                        }
                     }
                     '?' => {
                         self.chars.next();
@@ -65,33 +113,35 @@ impl<'a> Lexer<'a> {
                         Token::Op(Operator::Rparen)
                     }
                     '<' => {
-                        let cur = self.chars.next().unwrap();
-                        if let Some(next) = self.chars.peek() {
-                            if cur == '<' && *next == '<' {
+                        self.chars.next(); // consume first <
+                        if let Some(&next) = self.chars.peek() {
+                            if next == '<' {
                                 self.chars.next();
                                 Token::Op(Operator::Lsh)
+                            } else if next == '=' {
+                                self.chars.next();
+                                Token::Op(Operator::Le)
                             } else {
-                                // TODO: error handling
-                                todo!()
+                                Token::Op(Operator::Lt)
                             }
                         } else {
-                            // TODO: error handling
-                            todo!()
+                            Token::Op(Operator::Lt)
                         }
                     }
                     '>' => {
-                        let cur = self.chars.next().unwrap();
-                        if let Some(next) = self.chars.peek() {
-                            if cur == '>' && *next == '>' {
+                        self.chars.next();
+                        if let Some(&next) = self.chars.peek() {
+                            if next == '>' {
                                 self.chars.next();
                                 Token::Op(Operator::Rsh)
+                            } else if next == '=' {
+                                self.chars.next();
+                                Token::Op(Operator::Ge)
                             } else {
-                                // TODO: error handling
-                                todo!()
+                                Token::Op(Operator::Gt)
                             }
                         } else {
-                            // TODO: error handling
-                            todo!()
+                            Token::Op(Operator::Gt)
                         }
                     }
                     // II: Atoms: numbers and variables
@@ -148,7 +198,22 @@ impl<'a> Lexer<'a> {
     fn reserved_char(c: char) -> bool {
         matches!(
             c,
-            '+' | '-' | '/' | '*' | '%' | '&' | '|' | '?' | ':' | '(' | ')' | '<' | '>'
+            '+' | '-'
+                | '/'
+                | '*'
+                | '%'
+                | '&'
+                | '|'
+                | '^'
+                | '!'
+                | '='
+                | '~'
+                | '?'
+                | ':'
+                | '('
+                | ')'
+                | '<'
+                | '>'
         )
     }
 }
