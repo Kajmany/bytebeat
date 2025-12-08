@@ -1,12 +1,12 @@
 use color_eyre::Result;
 use std::thread;
 
-use crate::{audio::AudioCommand, event::EventHandler};
+use crate::{app::App, audio::AudioCommand, event::EventHandler};
 
+mod app;
 mod audio;
 mod event;
 mod parser;
-mod tui;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -19,6 +19,9 @@ fn main() -> Result<()> {
     let terminal_tx = events.get_term_sender();
     // Pipewire loop needs to tx states to App and rx commands from it (brokered by event handler)
     thread::spawn(move || crate::audio::main(terminal_tx, command_rx));
-    // App owns the event handler struct (but NOT the thread!)
-    tui::main(events)
+    // App owns the event handler struct (but NOT the event thread!)
+    let terminal = ratatui::init();
+    let result = App::new(events).run(terminal);
+    ratatui::restore();
+    result
 }
