@@ -103,6 +103,7 @@ dependencies = [
  "libspa-sys",
  "pipewire",
  "ratatui",
+ "thiserror",
 ]
 
 [[package]]
