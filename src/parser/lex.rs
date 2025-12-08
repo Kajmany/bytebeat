@@ -1,42 +1,20 @@
+//! Simple lexer with 1-token lookahead that handles a subset of C relevant to classic bytebeat. Only intended for a single statement of 1+ expression.
 use std::{iter::Peekable, str::Chars};
 
-enum Token {
-    // TODO: split atom to number and variable
-    Atom(String),
-    Op(Operator),
-    Eof,
-}
+use super::{Operator, Token};
 
-enum Operator {
-    Rsh,
-    Lsh,
-    Mul,
-    Div,
-    Plus,
-    Minus,
-    Mod,
-    Lparen,
-    Rparen,
-    // Bitwise
-    And,
-    Or,
-    // Ternary operator
-    Question,
-    Colon,
-}
-
-struct Lexer<'a> {
+pub struct Lexer<'a> {
     chars: Peekable<Chars<'a>>,
 }
 
 impl<'a> Lexer<'a> {
-    fn new(input: &'a str) -> Lexer<'a> {
+    pub fn new(input: &'a str) -> Lexer<'a> {
         Lexer {
             chars: input.chars().peekable(),
         }
     }
 
-    fn next(&mut self) -> Token {
+    pub fn next(&mut self) -> Token {
         self.skip_whitespace();
         match self.chars.peek() {
             Some(&c) => {
