@@ -9,7 +9,7 @@ use pipewire::{
 };
 use pw::properties::properties;
 
-use crate::event::Event;
+use crate::{event::Event, parser};
 
 const CHANNELS: usize = 2;
 const STRIDE: usize = size_of::<u8>() * CHANNELS;
@@ -34,20 +34,26 @@ pub enum StreamStatus {
     Streaming,
 }
 
-#[derive(Clone, Debug)]
 pub enum AudioCommand {
     Play,
     Pause,
+    NewBeat(parser::Beat),
 }
 
 struct AudioState {
-    pub t: u64,
+    pub t: u32,
     pub event_tx: mpsc::Sender<Event>,
+    pub beat: parser::Beat,
 }
 
 impl AudioState {
     pub fn new(event_tx: mpsc::Sender<Event>) -> AudioState {
-        AudioState { t: 0, event_tx }
+        AudioState {
+            t: 0,
+            event_tx,
+            // TODO: Not a pretty way to do defaults
+            beat: parser::Beat::compile("t*(42&t>>10)").unwrap(),
+        }
     }
 }
 
@@ -80,6 +86,9 @@ pub fn main(
     let _recv = command_rx.attach(main_loop.loop_(), move |msg| match msg {
         AudioCommand::Play => _stream_cmd.set_active(true).unwrap(),
         AudioCommand::Pause => _stream_cmd.set_active(false).unwrap(),
+        AudioCommand::NewBeat(beat) => {
+            _state_cmd.borrow_mut().beat = beat;
+        }
     });
 
     let _listener = stream
@@ -142,7 +151,6 @@ pub fn main(
 
 fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
     let mut state = state.borrow_mut();
-    let t = &mut state.t;
     match s.dequeue_buffer() {
         None => println!("Got no buffer!"),
         Some(mut buffer) => {
@@ -150,10 +158,10 @@ fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
             let n_frames = if let Some(slice) = buffer.datas_mut()[0].data() {
                 let n_frames = slice.len() / STRIDE;
                 for i in 0..n_frames {
-                    // First gen the frame
-                    //let value = (*t * (42 & *t >> 10)) as u8;
-                    let value = ((5 * *t) & (*t >> 7) | (3 * *t) & (*t >> 10)) as u8;
-                    *t += 1;
+                    // I thought walking an AST like this in a RT audio loop would cause like a million xruns,
+                    // but pw-top stats are about the same as when it was hardcoded. Crazy!
+                    let value = state.beat.eval(state.t);
+                    state.t += 1;
 
                     // Copy it across strides
                     for c in 0..CHANNELS {

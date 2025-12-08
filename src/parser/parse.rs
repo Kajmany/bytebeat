@@ -37,7 +37,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn parse_bp(&mut self, min_bp: u8) -> Result<NodeId, ParseError> {
         let mut left = match &self.current_token {
             Token::Atom(s) => {
-                let node = if let Ok(n) = s.parse::<i32>() {
+                let node = if let Ok(n) = s.parse::<u32>() {
                     ASTNode::Literal(n)
                 } else {
                     ASTNode::Variable(s.clone())

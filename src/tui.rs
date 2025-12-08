@@ -28,6 +28,9 @@ pub struct App {
     pub paused: bool,
     // May be streaming or paused, but also other things too
     pub audio_state: StreamStatus,
+    /// Representing a valid interpretable bytebeat code
+    // TODO: undo/redo system shouldn't be that hard. later.
+    pub beat: String,
 }
 
 impl App {
@@ -37,6 +40,8 @@ impl App {
             events,
             paused: true,
             audio_state: StreamStatus::Unconnected,
+            // TODO: Not a pretty way to do defaults
+            beat: "t*(42&t>>10)".to_owned(),
         }
     }
 
@@ -84,6 +89,12 @@ impl App {
                 self.paused = true;
             }
         };
+    }
+
+    /// Try-compile and play are one operation from the user's perspective
+    fn try_beat(&self) {
+        // FIXME: Display error to user
+        self.events.new_beat(&self.beat).unwrap();
     }
 
     /// Causes break and clean exit on next [`App::run`] loop

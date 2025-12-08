@@ -1,4 +1,5 @@
 use crate::audio::{AudioCommand, AudioEvent};
+use crate::parser::{self};
 use color_eyre::eyre::WrapErr;
 use crossterm::event::{self, Event as CrosstermEvent};
 use std::thread;
@@ -44,29 +45,29 @@ impl EventHandler {
         Ok(self.term_receiver.recv()?)
     }
 
-    // Queue an app event to be sent to the event term_receiver.
-    //
-    // This is useful for sending events to the event handler which will be processed by the next
-    // iteration of the application's event loop.
-    //pub fn send(&mut self, app_event: Event) {
-    //    // Ignore the result as the reciever cannot be dropped while this struct still has a
-    //    // reference to it
-    //    let _ = self.term_sender.send(Event::App(app_event));
-    //}
-
     /// Get a term_sender handler, intended for other threads that wish to send events to the
     /// [`crate::tui::App`]
-    // TODO: Should we encapsulate this at a higher level?
     pub fn get_term_sender(&self) -> mpsc::Sender<Event> {
         self.term_sender.clone()
     }
 
+    /// Enqueue play command for the audio thread to recieve. Should be fine if it's redundant.
     pub fn stream_play(&self) {
         let _ = self.audio_sender.send(AudioCommand::Play);
     }
 
+    /// Enqueue pause command for the audio thread to recieve. Should be fine if it's redundant.
     pub fn stream_pause(&self) {
         let _ = self.audio_sender.send(AudioCommand::Pause);
+    }
+
+    /// Attempt to compile a new beat. Return an error, or send it to the audio thread if successful.
+    // TODO: This can be made async if we give this duty to `EventThread` and send a message back to App.
+    //     Investigate lag!
+    pub fn new_beat(&self, beat: &str) -> color_eyre::Result<(), parser::ParseError> {
+        let beat = parser::Beat::compile(beat)?;
+        let _ = self.audio_sender.send(AudioCommand::NewBeat(beat));
+        Ok(())
     }
 }
 

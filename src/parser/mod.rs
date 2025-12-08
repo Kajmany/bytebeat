@@ -1,4 +1,4 @@
-//! Converts [`String`] input to functions that evaluate into classic (i32 -> u8) bytebeat, or dies trying.
+//! Converts [`String`] input to functions that evaluate into classic (u32 -> u8) bytebeat, or dies trying.
 //! LLM SLOP PRESENCE: EXTREME
 pub mod lex;
 pub mod parse;
@@ -49,7 +49,7 @@ pub type NodeId = usize;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ASTNode {
-    Literal(i32),
+    Literal(u32),
     Variable(String),
     Binary(Operator, NodeId, NodeId),
     Ternary(NodeId, NodeId, NodeId),
@@ -83,11 +83,11 @@ impl Beat {
         Ok(Beat { nodes, root })
     }
 
-    pub fn eval(&self, t: i32) -> u8 {
+    pub fn eval(&self, t: u32) -> u8 {
         self.eval_node(self.root, t) as u8
     }
 
-    fn eval_node(&self, id: NodeId, t: i32) -> i32 {
+    fn eval_node(&self, id: NodeId, t: u32) -> u32 {
         match &self.nodes[id] {
             ASTNode::Literal(n) => *n,
             ASTNode::Variable(_) => t, // TODO: Enforce this only at the front end or make it more clear inside this code we only do one var
@@ -289,7 +289,7 @@ mod tests {
         let prog = Beat::compile(code).expect("Failed to compile bytebeat");
 
         for t in 0..65536 {
-            let val = prog.eval(t as i32);
+            let val = prog.eval(t as u32);
             if val != expected[t as usize] {
                 panic!(
                     "Mismatch at t={}: expected {}, got {}. Code: {}",
