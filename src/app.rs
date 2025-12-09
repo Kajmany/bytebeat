@@ -1,12 +1,14 @@
 use color_eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use crate::{
+    app::input::LineInput,
     audio::{AudioEvent, StreamStatus},
     event::{Event, EventHandler},
 };
 
+mod input;
 mod ui;
 
 pub struct App {
@@ -18,7 +20,7 @@ pub struct App {
     pub audio_state: StreamStatus,
     /// Representing a valid interpretable bytebeat code
     // TODO: undo/redo system shouldn't be that hard. later.
-    pub beat: String,
+    pub beat_input: LineInput,
 }
 
 impl App {
@@ -29,7 +31,7 @@ impl App {
             paused: true,
             audio_state: StreamStatus::Unconnected,
             // TODO: Not a pretty way to do defaults
-            beat: "t*(42&t>>10)".to_owned(),
+            beat_input: LineInput::from_str("t*(42&t>>10)"),
         }
     }
 
@@ -58,8 +60,35 @@ impl App {
         match event.code {
             // We can always exit
             KeyCode::F(3) => self.quit(),
-            KeyCode::Char('p') | KeyCode::Char('P') => self.toggle_playback(),
-            _ => {} //TODO: This
+            KeyCode::F(4) => self.toggle_playback(),
+            // For now, we assume we're always focused on the input field
+            KeyCode::Backspace => {
+                self.beat_input.remove();
+            }
+            KeyCode::Char(c) => {
+                // This could be any unicode so this doesn't mean we're safe
+                // TODO: I won't be more strict yet b/c I don't want to ruin unicode fun
+                if !c.is_control() {
+                    self.beat_input.add(c);
+                }
+            }
+            KeyCode::Enter => self.try_beat(),
+            KeyCode::Left => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.beat_input.jump_left();
+                } else {
+                    self.beat_input.shift_left(1);
+                }
+            }
+            KeyCode::Right => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.beat_input.jump_right();
+                } else {
+                    self.beat_input.shift_right(1);
+                }
+            }
+            // This ain't emacs, pal.
+            _ => {}
         }
     }
 
@@ -82,7 +111,7 @@ impl App {
     /// Try-compile and play new are one operation from the user's perspective
     fn try_beat(&self) {
         // FIXME: Display error to user
-        self.events.new_beat(&self.beat).unwrap();
+        self.events.new_beat(&self.beat_input.get_buffer()).unwrap();
     }
 
     /// Causes break and clean exit on next [`App::run`] loop
