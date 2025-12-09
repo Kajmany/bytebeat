@@ -4,6 +4,7 @@ use color_eyre::eyre::WrapErr;
 use crossterm::event::{self, Event as CrosstermEvent};
 use std::thread;
 use std::{sync::mpsc, time::Duration};
+use tracing::{info, trace};
 
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -46,18 +47,20 @@ impl EventHandler {
     }
 
     /// Get a term_sender handler, intended for other threads that wish to send events to the
-    /// [`crate::tui::App`]
+    /// [`crate::app::App`]
     pub fn get_term_sender(&self) -> mpsc::Sender<Event> {
         self.term_sender.clone()
     }
 
     /// Enqueue play command for the audio thread to recieve. Should be fine if it's redundant.
     pub fn stream_play(&self) {
+        trace!("event handler sending play command");
         let _ = self.audio_sender.send(AudioCommand::Play);
     }
 
     /// Enqueue pause command for the audio thread to recieve. Should be fine if it's redundant.
     pub fn stream_pause(&self) {
+        trace!("event handler sending pause command");
         let _ = self.audio_sender.send(AudioCommand::Pause);
     }
 
@@ -65,7 +68,9 @@ impl EventHandler {
     // TODO: This can be made async if we give this duty to `EventThread` and send a message back to App.
     //     Investigate lag!
     pub fn new_beat(&self, beat: &str) -> color_eyre::Result<(), parser::ParseError> {
+        trace!("event handler recieved beat: {}", beat);
         let beat = parser::Beat::compile(beat)?;
+        trace!("compilation complete; event handler sending new beat command");
         let _ = self.audio_sender.send(AudioCommand::NewBeat(beat));
         Ok(())
     }
@@ -88,12 +93,14 @@ impl EventThread {
     ///
     /// This function polls for crossterm events.
     fn run(self) -> color_eyre::Result<()> {
+        info!("event thread loop starting");
         loop {
             // poll for crossterm events
             if event::poll(Duration::from_millis(100))
                 .wrap_err("failed to poll for crossterm events")?
             {
                 let event = event::read().wrap_err("failed to read crossterm event")?;
+                trace!("event thread recieved crossterm event: {:?}", event);
                 self.send(Event::Crossterm(event));
             }
         }

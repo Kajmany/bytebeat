@@ -1,6 +1,7 @@
 use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::DefaultTerminal;
+use tracing::{info, trace};
 
 use crate::{
     app::input::LineInput,
@@ -47,11 +48,15 @@ impl App {
         match self.events.next()? {
             Event::Crossterm(event) => match event {
                 crossterm::event::Event::Key(event) if event.kind == KeyEventKind::Press => {
+                    trace!("app handling crossterm event: {:?}", event);
                     self.handle_key_event(event)
                 }
                 _ => {}
             },
-            Event::Audio(AudioEvent::StateChange(event)) => self.audio_state = event,
+            Event::Audio(AudioEvent::StateChange(event)) => {
+                info!("app recieved audio state change: {:?}", event);
+                self.audio_state = event;
+            }
         }
         Ok(())
     }
@@ -116,6 +121,7 @@ impl App {
 
     /// Causes break and clean exit on next [`App::run`] loop
     fn quit(&mut self) {
+        trace!("app quit requested");
         self.running = false;
     }
 }

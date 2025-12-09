@@ -8,6 +8,7 @@ use pipewire::{
     stream::{Stream, StreamFlags, StreamState},
 };
 use pw::properties::properties;
+use tracing::{info, trace, warn};
 
 use crate::{event::Event, parser};
 
@@ -34,6 +35,7 @@ pub enum StreamStatus {
     Streaming,
 }
 
+#[derive(Debug)]
 pub enum AudioCommand {
     Play,
     Pause,
@@ -61,6 +63,7 @@ pub fn main(
     event_tx: mpsc::Sender<Event>,
     command_rx: pipewire::channel::Receiver<AudioCommand>,
 ) -> Result<(), pw::Error> {
+    info!("pipewire thread starting");
     let state = Rc::new(RefCell::new(AudioState::new(event_tx)));
     pw::init();
     let main_loop: &'static mut MainLoopRc = Box::leak(Box::new(MainLoopRc::new(None)?));
@@ -83,11 +86,14 @@ pub fn main(
     //   but it holds up to spamming toggle so it works for now...?
     let _stream_cmd = stream.clone();
     let _state_cmd = state.clone();
-    let _recv = command_rx.attach(main_loop.loop_(), move |msg| match msg {
-        AudioCommand::Play => _stream_cmd.set_active(true).unwrap(),
-        AudioCommand::Pause => _stream_cmd.set_active(false).unwrap(),
-        AudioCommand::NewBeat(beat) => {
-            _state_cmd.borrow_mut().beat = beat;
+    let _recv = command_rx.attach(main_loop.loop_(), move |msg| {
+        trace!("pipewire thread received command: {:?}", msg);
+        match msg {
+            AudioCommand::Play => _stream_cmd.set_active(true).unwrap(),
+            AudioCommand::Pause => _stream_cmd.set_active(false).unwrap(),
+            AudioCommand::NewBeat(beat) => {
+                _state_cmd.borrow_mut().beat = beat;
+            }
         }
     });
 
@@ -103,7 +109,8 @@ pub fn main(
                 StreamState::Paused => StreamStatus::Paused,
                 StreamState::Streaming => StreamStatus::Streaming,
             };
-            // TODO: probably okay but why
+
+            trace!("pipewire thread sending state change: {:?}", new_state);
             let _ = state
                 .borrow()
                 .event_tx
@@ -145,14 +152,16 @@ pub fn main(
     )?;
     stream.set_active(false)?;
 
+    info!("pipewire thread startup complete, starting main loop");
     main_loop.run();
+    info!("pipewire thread exiting");
     Ok(())
 }
 
 fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
     let mut state = state.borrow_mut();
     match s.dequeue_buffer() {
-        None => println!("Got no buffer!"),
+        None => warn!("no buffer available for pipewire process thread"),
         Some(mut buffer) => {
             // We may get a valid buffer that is 0-sized(?)
             let n_frames = if let Some(slice) = buffer.datas_mut()[0].data() {

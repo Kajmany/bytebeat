@@ -71,6 +71,7 @@ pub enum ParseError {
     ExpectedTernaryColon,
 }
 
+#[derive(Debug)]
 pub struct Beat {
     nodes: Vec<ASTNode>,
     root: NodeId,
