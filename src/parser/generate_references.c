@@ -5,7 +5,9 @@
 // LLM SLOP PRESENCE: ABSURD
 #include <stdio.h>
 #include <stdint.h>
-#include <string.h>
+
+// These should be presented and evaluated in their original form (matches our Rust tests, too)
+#pragma clang diagnostic ignored "-Wbitwise-conditional-parentheses"
 
 // Helper to write a file
 void write_file(const char* filename, uint8_t (*func)(int)) {

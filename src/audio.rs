@@ -43,7 +43,7 @@ pub enum AudioCommand {
 }
 
 struct AudioState {
-    pub t: u32,
+    pub t: i32,
     pub event_tx: mpsc::Sender<Event>,
     pub beat: parser::Beat,
 }

@@ -1,4 +1,4 @@
-//! Converts [`String`] input to functions that evaluate into classic (u32 -> u8) bytebeat, or dies trying.
+//! Converts [`String`] input to functions that evaluate into classic (i32 -> u8) bytebeat, or dies trying.
 //! LLM SLOP PRESENCE: EXTREME
 pub mod lex;
 pub mod parse;
@@ -7,8 +7,9 @@ use self::parse::Parser;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
-    // TODO: split atom to number and variable
-    Atom(String),
+    /// Must be 't'
+    Variable,
+    Number(i32),
     Op(Operator),
     Eof,
 }
@@ -41,7 +42,9 @@ pub enum Operator {
     Ge,
     Le,
     // Ternary operator
+    /// Part of the ternary operator.
     Question,
+    /// Part of the ternary operator.
     Colon,
 }
 
@@ -49,8 +52,8 @@ pub type NodeId = usize;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ASTNode {
-    Literal(u32),
-    Variable(String),
+    Literal(i32),
+    Variable,
     Binary(Operator, NodeId, NodeId),
     Ternary(NodeId, NodeId, NodeId),
 }
@@ -72,7 +75,9 @@ pub enum ParseError {
 }
 
 #[derive(Debug)]
+/// AST of a classic bytebeat function. May be evaluated for 't' into a u8 sample.
 pub struct Beat {
+    // Could be an arena but not practically necessary
     nodes: Vec<ASTNode>,
     root: NodeId,
 }
@@ -84,14 +89,14 @@ impl Beat {
         Ok(Beat { nodes, root })
     }
 
-    pub fn eval(&self, t: u32) -> u8 {
+    pub fn eval(&self, t: i32) -> u8 {
         self.eval_node(self.root, t) as u8
     }
 
-    fn eval_node(&self, id: NodeId, t: u32) -> u32 {
+    fn eval_node(&self, id: NodeId, t: i32) -> i32 {
         match &self.nodes[id] {
             ASTNode::Literal(n) => *n,
-            ASTNode::Variable(_) => t, // TODO: Enforce this only at the front end or make it more clear inside this code we only do one var
+            ASTNode::Variable => t,
             ASTNode::Binary(op, left, right) => {
                 let l = self.eval_node(*left, t);
                 let r = self.eval_node(*right, t);
@@ -290,7 +295,7 @@ mod tests {
         let prog = Beat::compile(code).expect("Failed to compile bytebeat");
 
         for t in 0..65536 {
-            let val = prog.eval(t as u32);
+            let val = prog.eval(t);
             if val != expected[t as usize] {
                 panic!(
                     "Mismatch at t={}: expected {}, got {}. Code: {}",

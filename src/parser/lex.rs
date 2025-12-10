@@ -82,17 +82,6 @@ impl<'a> Lexer<'a> {
                             self.chars.next();
                             Token::Op(Operator::Eq)
                         } else {
-                            // Assignment not supported, or treat as error?
-                            // Lexer usually returns error or unexpected token?
-                            // User asked for ==.
-                            // Treat single = as unknown or error?
-                            // Current lexer panics or todo on unknown?
-                            // `_` arm handles atoms.
-                            // Lexer structure matches specific chars.
-                            // If I don't match `=`, it goes to `_` -> variable starting with `=`?
-                            // `Lexer::reserved_char` includes operators. I should add `=` to reserved chars.
-                            // But for now, if I match `=`, I expect `==`.
-                            // If not `==`, panic/todo?
                             todo!("Assignment or single = not supported")
                         }
                     }
@@ -144,8 +133,7 @@ impl<'a> Lexer<'a> {
                             Token::Op(Operator::Gt)
                         }
                     }
-                    // II: Atoms: numbers and variables
-                    // Variables may not start with numbers, like C
+                    // II: Numbers (always into i32)
                     '0'..='9' => {
                         // Python moment
                         let mut number_string = String::new();
@@ -157,29 +145,21 @@ impl<'a> Lexer<'a> {
                                 break;
                             }
                         }
-                        Token::Atom(number_string)
+                        // Should be okay since we're already matching numerals
+                        Token::Number(number_string.parse().unwrap())
                     }
-                    // Unlike C, we'll try to make anything that's not already matched a variable.
-                    // TODO: was this regrettable?
+                    // III: Variables. Could be anything, but we restrict to 't' for the users' sanity.
+                    't' => {
+                        self.chars.next();
+                        Token::Variable
+                    }
                     _ => {
-                        let mut variable_string = String::new();
-                        // Match should be desirable since whitespace, numeric, reserved handled already
-                        variable_string.push(self.chars.next().unwrap());
-                        while let Some(&peeked) = self.chars.peek() {
-                            if peeked.is_whitespace()
-                                | peeked.is_numeric()
-                                | Lexer::reserved_char(peeked)
-                            {
-                                break;
-                            } else {
-                                variable_string.push(self.chars.next().unwrap());
-                            }
-                        }
-                        Token::Atom(variable_string)
+                        // TODO: We want to keep going and just stack up errors
+                        todo!("Unexpected character: {}", self.chars.next().unwrap())
                     }
                 }
             }
-            // III: End
+            // IV: End
             None => Token::Eof,
         }
     }
@@ -192,28 +172,5 @@ impl<'a> Lexer<'a> {
                 return;
             }
         }
-    }
-
-    /// Variables may not contain any operator characters anywhere inside
-    fn reserved_char(c: char) -> bool {
-        matches!(
-            c,
-            '+' | '-'
-                | '/'
-                | '*'
-                | '%'
-                | '&'
-                | '|'
-                | '^'
-                | '!'
-                | '='
-                | '~'
-                | '?'
-                | ':'
-                | '('
-                | ')'
-                | '<'
-                | '>'
-        )
     }
 }

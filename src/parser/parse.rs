@@ -36,12 +36,13 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn parse_bp(&mut self, min_bp: u8) -> Result<NodeId, ParseError> {
         let mut left = match &self.current_token {
-            Token::Atom(s) => {
-                let node = if let Ok(n) = s.parse::<u32>() {
-                    ASTNode::Literal(n)
-                } else {
-                    ASTNode::Variable(s.clone())
-                };
+            Token::Number(n) => {
+                let node = ASTNode::Literal(*n);
+                self.advance();
+                self.push_node(node)
+            }
+            Token::Variable => {
+                let node = ASTNode::Variable;
                 self.advance();
                 self.push_node(node)
             }
