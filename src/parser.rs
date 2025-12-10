@@ -3,6 +3,8 @@
 pub mod lex;
 pub mod parse;
 
+use std::ops::Deref;
+
 use self::parse::Parser;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -12,6 +14,38 @@ pub enum Token {
     Number(i32),
     Op(Operator),
     Eof,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Span {
+    pub fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    pub fn new(node: T, span: Span) -> Self {
+        Self { node, span }
+    }
+}
+
+impl<T> Deref for Spanned<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]

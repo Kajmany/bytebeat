@@ -1,27 +1,29 @@
 //! Pratt-flavored(?) Parser intended to handle a single statement in a C subset.
 //! LLM SLOP PRESENCE: EXTREME
+use crate::parser::Spanned;
+
 use super::lex::Lexer;
 use super::{ASTNode, NodeId, Operator, ParseError, Token};
 
 pub struct Parser<'a, 'b> {
     lexer: Lexer<'a>,
-    current_token: Token,
+    current: Spanned<Token>,
     arena: &'b mut Vec<ASTNode>,
 }
 
 impl<'a, 'b> Parser<'a, 'b> {
     pub fn new(input: &'a str, arena: &'b mut Vec<ASTNode>) -> Self {
         let mut lexer = Lexer::new(input);
-        let current_token = lexer.next();
+        let current = lexer.next();
         Parser {
             lexer,
-            current_token,
+            current,
             arena,
         }
     }
 
     fn advance(&mut self) {
-        self.current_token = self.lexer.next();
+        self.current = self.lexer.next();
     }
 
     pub fn parse(&mut self) -> Result<NodeId, ParseError> {
@@ -35,9 +37,9 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn parse_bp(&mut self, min_bp: u8) -> Result<NodeId, ParseError> {
-        let mut left = match &self.current_token {
+        let mut left = match *self.current {
             Token::Number(n) => {
-                let node = ASTNode::Literal(*n);
+                let node = ASTNode::Literal(n);
                 self.advance();
                 self.push_node(node)
             }
@@ -49,7 +51,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Op(Operator::Lparen) => {
                 self.advance();
                 let expr = self.parse_bp(0)?;
-                if let Token::Op(Operator::Rparen) = self.current_token {
+                if let Token::Op(Operator::Rparen) = *self.current {
                     self.advance();
                     expr
                 } else {
@@ -62,11 +64,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                     Operator::Minus | Operator::Plus | Operator::LogNot | Operator::BitNot => {
                         ((), 99)
                     }
-                    _ => return Err(ParseError::UnexpectedPrefix(*op)),
+                    _ => return Err(ParseError::UnexpectedPrefix(op)),
                 };
 
                 // Need to consume the operator
-                let op_val = *op;
+                let op_val = op;
                 self.advance();
                 let right = self.parse_bp(right_bp)?;
 
@@ -91,7 +93,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         };
 
         loop {
-            let op = match self.current_token {
+            let op = match *self.current {
                 Token::Op(op) => op,
                 Token::Eof => break,
                 _ => return Err(ParseError::ExpectedOperator),
@@ -107,7 +109,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 let true_branch = self.parse_bp(0)?;
 
-                if let Token::Op(Operator::Colon) = self.current_token {
+                if let Token::Op(Operator::Colon) = *self.current {
                     self.advance(); // consume ':'
                     let false_branch = self.parse_bp(r_bp)?;
                     left = self.push_node(ASTNode::Ternary(left, true_branch, false_branch));
