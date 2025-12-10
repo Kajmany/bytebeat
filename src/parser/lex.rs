@@ -3,6 +3,8 @@
 //! Column aware, but should not be exposed to newlines yet. TODO: That!
 use std::{iter::Peekable, str::Chars};
 
+use crate::parser::LexError;
+
 use super::{Operator, Span, Spanned, Token};
 
 pub struct Lexer<'a> {
@@ -97,8 +99,8 @@ impl<'a> Lexer<'a> {
                             self.bump();
                             Token::Op(Operator::Eq)
                         } else {
-                            // TODO: Assignment or single = not supported
-                            todo!("Assignment or single = not supported: {}", c)
+                            // Hey pal, this isn't that kind of statement!
+                            Token::Err(LexError::SolitaryEquals)
                         }
                     }
                     '?' => {
@@ -170,8 +172,8 @@ impl<'a> Lexer<'a> {
                         Token::Variable
                     }
                     _ => {
-                        // TODO: We want to keep going and just stack up errors
-                        todo!("Unexpected character: {}", c)
+                        self.bump();
+                        Token::Err(LexError::UnexpectedChar(c))
                     }
                 }
             }
@@ -278,5 +280,24 @@ mod tests {
         let input = "   ";
         let mut lexer = Lexer::new(input);
         assert_token(&mut lexer, Token::Eof, 3, 3);
+    }
+
+    #[test]
+    fn test_error_tokens() {
+        let input = "=";
+        let mut lexer = Lexer::new(input);
+        let token = lexer.next();
+        if let Token::Err(LexError::SolitaryEquals) = token.node {
+        } else {
+            panic!("Expected SolitaryEquals, got {:?}", token.node);
+        }
+
+        let input = "@";
+        let mut lexer = Lexer::new(input);
+        let token = lexer.next();
+        if let Token::Err(LexError::UnexpectedChar('@')) = token.node {
+        } else {
+            panic!("Expected UnexpectedChar(@), got {:?}", token.node);
+        }
     }
 }

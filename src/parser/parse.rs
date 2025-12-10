@@ -1,4 +1,7 @@
-//! Pratt-flavored(?) Parser intended to handle a single statement in a C subset.
+//! Pratt Parser intended to handle a single statement in a C subset.
+//!
+//! Will wrap multiple errors (including Lexer errors) and has some (unreliable) recoverability.
+//!
 //! LLM SLOP PRESENCE: EXTREME
 use crate::parser::Spanned;
 
@@ -9,6 +12,7 @@ pub struct Parser<'a, 'b> {
     lexer: Lexer<'a>,
     current: Spanned<Token>,
     arena: &'b mut Vec<ASTNode>,
+    errors: Vec<ParseError>,
 }
 
 impl<'a, 'b> Parser<'a, 'b> {
@@ -19,6 +23,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             lexer,
             current,
             arena,
+            errors: Vec::new(),
         }
     }
 
@@ -26,8 +31,22 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.current = self.lexer.next();
     }
 
-    pub fn parse(&mut self) -> Result<NodeId, ParseError> {
-        self.parse_bp(0)
+    pub fn parse(&mut self) -> Result<NodeId, Vec<ParseError>> {
+        let result = self.parse_bp(0);
+        match result {
+            // We may still have errors overall even if the root parse is Ok.
+            Ok(root) => {
+                if self.errors.is_empty() {
+                    Ok(root)
+                } else {
+                    Err(std::mem::take(&mut self.errors))
+                }
+            }
+            Err(e) => {
+                self.errors.push(e);
+                Err(std::mem::take(&mut self.errors))
+            }
+        }
     }
 
     fn push_node(&mut self, node: ASTNode) -> NodeId {
@@ -55,7 +74,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     self.advance();
                     expr
                 } else {
-                    return Err(ParseError::UnmatchedParenthesis);
+                    return Err(ParseError::UnmatchedParenthesis(self.current.span));
                 }
             }
             Token::Op(op) => {
@@ -64,7 +83,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     Operator::Minus | Operator::Plus | Operator::LogNot | Operator::BitNot => {
                         ((), 99)
                     }
-                    _ => return Err(ParseError::UnexpectedPrefix(op)),
+                    _ => return Err(ParseError::UnexpectedPrefix(op, self.current.span)),
                 };
 
                 // Need to consume the operator
@@ -89,14 +108,37 @@ impl<'a, 'b> Parser<'a, 'b> {
                     _ => unreachable!(),
                 }
             }
-            Token::Eof => return Err(ParseError::UnexpectedEof),
+            Token::Err(ref e) => {
+                let span = self.current.span;
+                let err = ParseError::LexError(e.clone(), span);
+                self.errors.push(err);
+                self.advance();
+                self.push_node(ASTNode::Error(span))
+            }
+            Token::Eof => return Err(ParseError::UnexpectedEof(self.current.span)),
         };
 
         loop {
             let op = match *self.current {
                 Token::Op(op) => op,
                 Token::Eof => break,
-                _ => return Err(ParseError::ExpectedOperator),
+                Token::Err(ref e) => {
+                    let span = self.current.span;
+                    let err = ParseError::LexError(e.clone(), span);
+                    self.errors.push(err);
+                    self.advance();
+                    // In infix position, if we hit an error, we might want to return an Error node via some mechanism
+                    // But effectively we are expecting an operator.
+                    // If we assume the user missed an operator? Or typed garbage?
+                    // Let's break the loop, but allow the parse to finish with accumulated errors.
+                    // Actually if we just break, we return `left`.
+                    // But we haven't consumed the error token if we don't advance.
+                    // We advanced above.
+                    // So we treat it as end of expression?
+                    // "recover safely"?
+                    break;
+                }
+                _ => return Err(ParseError::ExpectedOperator(self.current.span)),
             };
 
             // Postfix ?
@@ -115,7 +157,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     left = self.push_node(ASTNode::Ternary(left, true_branch, false_branch));
                     continue;
                 } else {
-                    return Err(ParseError::ExpectedTernaryColon);
+                    return Err(ParseError::ExpectedTernaryColon(self.current.span));
                 }
             }
 
@@ -168,8 +210,12 @@ fn infix_binding_power(op: Operator) -> (u8, u8) {
     }
 }
 
+// None of these slopped tests are terribly useful (since Beat's tests are more realistic)
+// But the recovery is interesting to ensure we have a temporarily sensible AST still.
 #[cfg(test)]
 mod tests {
+    use crate::parser::LexError;
+
     use super::*;
 
     #[test]
@@ -190,6 +236,130 @@ mod tests {
             }
         } else {
             panic!("Top structure wrong");
+        }
+    }
+
+    #[test]
+    fn test_recovery() {
+        let mut arena = Vec::new();
+        let mut p = Parser::new("t + @", &mut arena);
+        let result = p.parse();
+
+        match result {
+            Ok(_) => panic!("Should have returned error"),
+            Err(errors) => {
+                assert_eq!(errors.len(), 1);
+                if let ParseError::LexError(LexError::UnexpectedChar('@'), _) = errors[0] {
+                } else {
+                    panic!("Wrong error type: {:?}", errors[0]);
+                }
+            }
+        }
+
+        assert_eq!(arena.len(), 3);
+        assert!(matches!(arena[1], ASTNode::Error(_)));
+        assert!(matches!(arena[2], ASTNode::Binary(Operator::Plus, _, _)));
+    }
+
+    #[test]
+    fn test_multiple_errors() {
+        let mut arena = Vec::new();
+        let mut p = Parser::new("@ + @", &mut arena);
+        let result = p.parse();
+
+        match result {
+            Ok(_) => panic!("Should have returned errors"),
+            Err(errors) => {
+                assert_eq!(errors.len(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn test_ternary_precedence() {
+        let mut arena = Vec::new();
+        // t > 128 ? t : 0
+        // > is (50, 51). ? is (10, 9).
+        let mut p = Parser::new("t > 128 ? t : 0", &mut arena);
+        let root = p.parse().unwrap();
+
+        if let ASTNode::Ternary(cond, _, _) = &arena[root] {
+            assert!(matches!(arena[*cond], ASTNode::Binary(Operator::Gt, _, _)));
+        } else {
+            panic!("Precedence check failed given: {:?}", arena[root]);
+        }
+    }
+
+    #[test]
+    fn test_ternary_nested() {
+        let mut arena = Vec::new();
+        // t ? t ? 1 : 2 : 0
+        // Should parse as t ? (t ? 1 : 2) : 0 because of right associativity (10, 9)
+        let mut p = Parser::new("t ? t ? 1 : 2 : 0", &mut arena);
+        let root = p.parse().unwrap();
+
+        if let ASTNode::Ternary(cond, true_branch, false_branch) = &arena[root] {
+            assert_eq!(arena[*cond], ASTNode::Variable);
+            assert_eq!(arena[*false_branch], ASTNode::Literal(0));
+
+            if let ASTNode::Ternary(c2, t2, f2) = &arena[*true_branch] {
+                assert_eq!(arena[*c2], ASTNode::Variable);
+                assert_eq!(arena[*t2], ASTNode::Literal(1));
+                assert_eq!(arena[*f2], ASTNode::Literal(2));
+            } else {
+                panic!("Inner ternary wrong: {:?}", arena[*true_branch]);
+            }
+        } else {
+            panic!("Top structure wrong: {:?}", arena[root]);
+        }
+    }
+
+    #[test]
+    fn test_ternary_recovery() {
+        let mut arena = Vec::new();
+        // t ? @ : @
+        // Should produce 2 errors and still form a Ternary node
+        let mut p = Parser::new("t ? @ : @", &mut arena);
+        let result = p.parse();
+
+        match result {
+            Ok(_) => panic!("Should have returned errors"),
+            Err(errors) => {
+                assert_eq!(errors.len(), 2);
+                assert!(matches!(errors[0], ParseError::LexError(_, _)));
+                assert!(matches!(errors[1], ParseError::LexError(_, _)));
+            }
+        }
+
+        // Arena should still have the structure
+        assert!(arena.len() >= 4);
+        let root = arena.len() - 1;
+        assert!(matches!(arena[root], ASTNode::Ternary(_, _, _)));
+    }
+
+    #[test]
+    fn test_recovery_in_parens() {
+        let mut arena = Vec::new();
+        // (@ + 1) * t
+        let mut p = Parser::new("(@ + 1) * t", &mut arena);
+        match p.parse() {
+            Ok(_) => panic!("Should have returned errors"),
+            Err(errors) => {
+                assert_eq!(errors.len(), 1);
+            }
+        }
+
+        let root = arena.len() - 1;
+        if let ASTNode::Binary(Operator::Mul, l, r) = &arena[root] {
+            assert_eq!(arena[*r], ASTNode::Variable);
+            if let ASTNode::Binary(Operator::Plus, ll, lr) = &arena[*l] {
+                assert!(matches!(arena[*ll], ASTNode::Error(_)));
+                assert_eq!(arena[*lr], ASTNode::Literal(1));
+            } else {
+                panic!("Inside parens structure wrong");
+            }
+        } else {
+            panic!("Root structure wrong");
         }
     }
 }

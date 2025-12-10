@@ -67,7 +67,7 @@ impl EventHandler {
     /// Attempt to compile a new beat. Return an error, or send it to the audio thread if successful.
     // TODO: This can be made async if we give this duty to `EventThread` and send a message back to App.
     //     Investigate lag!
-    pub fn new_beat(&self, beat: &str) -> color_eyre::Result<(), parser::ParseError> {
+    pub fn new_beat(&self, beat: &str) -> color_eyre::Result<(), Vec<parser::ParseError>> {
         trace!("event handler recieved beat: {}", beat);
         let beat = parser::Beat::compile(beat)?;
         trace!("compilation complete; event handler sending new beat command");

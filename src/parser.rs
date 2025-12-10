@@ -1,8 +1,11 @@
-//! Converts [`String`] input to functions that evaluate into classic (i32 -> u8) bytebeat, or dies trying.
+//! Converts [`String`] input to functions that evaluate into classic (i32 -> u8) bytebeat, or accrues a
+//! vec full of errors while trying.
+//!
 //! LLM SLOP PRESENCE: EXTREME
 pub mod lex;
 pub mod parse;
 
+use std::fmt;
 use std::ops::Deref;
 
 use self::parse::Parser;
@@ -13,9 +16,14 @@ pub enum Token {
     Variable,
     Number(i32),
     Op(Operator),
+    /// Represents an lexer-specific error. Not directly parsable.
+    // Is this a smart way to do lazy errors, or a hack? Both?
+    Err(LexError),
     Eof,
 }
 
+/// Represents the start and end occurence in the column for a type.
+/// Inclusive on both ends, so a span of [0, 0] is a single character at the start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
@@ -28,6 +36,17 @@ impl Span {
     }
 }
 
+impl fmt::Display for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.start == self.end {
+            write!(f, "col {}", self.start)
+        } else {
+            write!(f, "col {}..{}", self.start, self.end)
+        }
+    }
+}
+
+/// Every token is wrapped in a `[Span]` using this.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spanned<T> {
     pub node: T,
@@ -90,22 +109,39 @@ pub enum ASTNode {
     Variable,
     Binary(Operator, NodeId, NodeId),
     Ternary(NodeId, NodeId, NodeId),
+    /// Because `[Beat]` uses these too, we're making invalid state representable.
+    /// there's logic elsewhere that should prevent creation of a valid beat with these.
+    Error(Span),
 }
 
 use thiserror::Error;
+use tracing::error;
 
+/// Span IS attached because these are not wrapped and meant to be returned outside module
 #[derive(Error, Debug, PartialEq)]
 pub enum ParseError {
-    #[error("Unexpected end of file")]
-    UnexpectedEof,
-    #[error("Expected operator, found something else")]
-    ExpectedOperator,
-    #[error("Expected matching ')'")]
-    UnmatchedParenthesis,
-    #[error("Unexpected prefix operator: {0:?}")]
-    UnexpectedPrefix(Operator),
-    #[error("Expected ':' in ternary expression")]
-    ExpectedTernaryColon,
+    #[error("Unexpected end of file at {0}")]
+    UnexpectedEof(Span),
+    #[error("Expected operator, found something else at {0}")]
+    ExpectedOperator(Span),
+    #[error("Expected matching ')' at {0}")]
+    UnmatchedParenthesis(Span),
+    #[error("Unexpected prefix operator: {0:?} at {1}")]
+    UnexpectedPrefix(Operator, Span),
+    #[error("Expected ':' in ternary expression at {0}")]
+    ExpectedTernaryColon(Span),
+    #[error("Lexer error: {0} at {1}")]
+    LexError(LexError, Span),
+}
+
+/// Span is NOT attached because these errors are either in a `[Token::Err]`
+/// or in a `[ParseError::LexError]` which carries the relevant `[Span]`
+#[derive(Error, Debug, PartialEq, Clone)]
+pub enum LexError {
+    #[error("Assignment or single = not supported")]
+    SolitaryEquals,
+    #[error("Unexpected character: {0}")]
+    UnexpectedChar(char),
 }
 
 #[derive(Debug)]
@@ -117,7 +153,7 @@ pub struct Beat {
 }
 
 impl Beat {
-    pub fn compile(source: &str) -> Result<Beat, ParseError> {
+    pub fn compile(source: &str) -> Result<Beat, Vec<ParseError>> {
         let mut nodes = Vec::new();
         let root = Parser::new(source, &mut nodes).parse()?;
         Ok(Beat { nodes, root })
@@ -231,6 +267,11 @@ impl Beat {
                 } else {
                     self.eval_node(*false_branch, t)
                 }
+            }
+            // This shouldn't ever happen!
+            ASTNode::Error(_) => {
+                error!("Beat is evaluating an AST that has error nodes. This is a program bug!");
+                0
             }
         }
     }
