@@ -2,6 +2,7 @@ use color_eyre::Result;
 use std::thread;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, prelude::*};
+use tui_logger::{LevelFilter, TuiLoggerFile};
 
 use crate::{app::App, audio::AudioCommand, event::EventHandler};
 
@@ -18,34 +19,37 @@ struct Cli {
     /// Log to file. May provide filename, or default to "bytebeat.log"
     #[arg(short = 'f', long = "log-file", num_args = 0..=1, default_missing_value = "bytebeat.log")]
     log_file: Option<std::path::PathBuf>,
+    /// Log at 'trace'. 'info' otherwise. `RUST_LOG` env takes precedence.
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
 
-    let (file_layer, _guard) = if let Some(path) = cli.log_file {
-        let file = std::fs::File::options()
-            .append(true)
-            .create(true)
-            .open(path)?;
-        let (non_blocking, _guard) = tracing_appender::non_blocking(file);
-        let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(non_blocking)
-            .with_ansi(false)
-            .with_thread_names(true);
-        (Some(file_layer), Some(_guard))
+    let (level_str, level_enum) = if cli.verbose {
+        ("trace", LevelFilter::Trace)
     } else {
-        (None, None)
+        ("info", LevelFilter::Info)
     };
+    // Environment variable takes precedence over -v flag usage
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| format!("{0}={1}", env!("CARGO_CRATE_NAME"), level_str).into());
 
     tracing_subscriber::registry()
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| format!("{}=trace", env!("CARGO_CRATE_NAME")).into()),
-        )
-        .with(file_layer)
+        .with(filter)
+        .with(tui_logger::TuiTracingSubscriberLayer)
         .init();
+
+    tui_logger::init_logger(level_enum)?;
+    if let Some(path) = cli.log_file {
+        tui_logger::set_log_file(TuiLoggerFile::new(
+            path.to_str()
+                // This shouldn't happen.
+                .expect("provided path valid but not convertible to &str"),
+        ));
+    }
 
     info!("app starting");
     // Somewhat ugly piping between threads done here

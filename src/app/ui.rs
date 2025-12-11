@@ -27,7 +27,8 @@ impl Widget for &mut App {
             // One big widget area, and a little bottom bar
             .constraints(vec![
                 Constraint::Percentage(40),
-                Constraint::Percentage(58),
+                Constraint::Percentage(40),
+                Constraint::Percentage(18),
                 Constraint::Min(2),
             ])
             .split(main_block.inner(area));
@@ -49,12 +50,23 @@ impl Widget for &mut App {
         Paragraph::new("Pretend this is a wave form visualizer. Trippy!")
             .centered()
             .render(main_interior[0], buf);
-        self.beat_input.render(main_interior[1], buf);
+
+        tui_logger::TuiLoggerWidget::default()
+            .block(Block::bordered().title(" Log "))
+            .output_separator('|')
+            .output_timestamp(Some("%H:%M:%S".to_string()))
+            .output_level(Some(tui_logger::TuiLoggerLevelOutput::Long))
+            .output_target(false)
+            .output_file(false)
+            .output_line(false)
+            .render(main_interior[1], buf);
+
+        self.beat_input.render(main_interior[2], buf);
         // Status bar text must be rendered before status bar
         Paragraph::new(stream_status)
             .centered()
             .style(Style::default().add_modifier(Modifier::BOLD))
-            .render(status_block.inner(main_interior[2]), buf);
-        status_block.render(main_interior[2], buf);
+            .render(status_block.inner(main_interior[3]), buf);
+        status_block.render(main_interior[3], buf);
     }
 }
