@@ -28,10 +28,9 @@ In fact, several good reasons exist for not doing so, but I ignored them.
 - True-to-C evaluation: According to my system's compiler, because the tests compare samples to those generated in C with the same bytebeat codes. I might be missing edge cases, but every operator is represented at least once in testing.
 - Lexer/Parser Recovery & Positionally-aware Errors: Attempts to deliver all errors and their column occurance at once upon failed compilation.
 - Logging: Most recent logs in-TUI, optional file logging (*may* provide path) `-f`, verbosity configurable with `RUST_LOG` or `-v --verbose`. Environment variable has precedence over flag.
-- Audio control: Currently just Play/Pause. Volume control is another TODO.
+- Audio control: Play/Pause the stream, and volume is controllable 0%-100%. Backend handles the audio control -- you don't want to hear what it sounds like if we multiply 8-bit samples by an f32.
 
 # TODO
-- Volume control. Should use a small TUI widget and send commands to the audio thread.
 - Operating modes
     - Headless (maybe?) - allow codes to be piped
     - File-watch (definitely) so we don't need a more complicated editor/errors. Will need multiline support. Should be tested so that common IDE's can work in the file.

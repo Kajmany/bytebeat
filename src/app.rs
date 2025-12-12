@@ -5,23 +5,26 @@ use tracing::{info, trace};
 
 use crate::{
     app::input::LineInput,
-    audio::{AudioEvent, StreamStatus},
+    audio::{AudioEvent, StreamStatus, Volume},
     event::{Event, EventHandler},
 };
 
 mod input;
 mod ui;
+mod volume;
 
 pub struct App {
-    pub running: bool,
-    pub events: EventHandler,
+    running: bool,
+    events: EventHandler,
     // As we wish it.
-    pub paused: bool,
+    paused: bool,
     // May be streaming or paused, but also other things too
-    pub audio_state: StreamStatus,
+    audio_state: StreamStatus,
+    /// No boost, only decrease.
+    audio_vol: Volume,
     /// Representing a valid interpretable bytebeat code
     // TODO: undo/redo system shouldn't be that hard. later.
-    pub beat_input: LineInput,
+    beat_input: LineInput,
 }
 
 impl App {
@@ -31,6 +34,7 @@ impl App {
             events,
             paused: true,
             audio_state: StreamStatus::Unconnected,
+            audio_vol: Volume::default(),
             // TODO: Not a pretty way to do defaults
             beat_input: LineInput::from_str("t*(42&t>>10)"),
         }
@@ -44,7 +48,7 @@ impl App {
         Ok(())
     }
 
-    pub fn update(&mut self) -> Result<()> {
+    fn update(&mut self) -> Result<()> {
         match self.events.next()? {
             Event::Crossterm(event) => match event {
                 crossterm::event::Event::Key(event) if event.kind == KeyEventKind::Press => {
@@ -71,9 +75,9 @@ impl App {
                 self.beat_input.remove();
             }
             KeyCode::Char(c) => {
-                // This could be any unicode so this doesn't mean we're safe
-                // TODO: I won't be more strict yet b/c I don't want to ruin unicode fun
                 if !c.is_control() {
+                    // This could be any unicode so this doesn't mean we're safe
+                    // But we probably don't need to care
                     self.beat_input.add(c);
                 }
             }
@@ -92,12 +96,18 @@ impl App {
                     self.beat_input.shift_right(1);
                 }
             }
+            KeyCode::Up => {
+                self.incr_volume();
+            }
+            KeyCode::Down => {
+                self.decr_volume();
+            }
             // This ain't emacs, pal.
             _ => {}
         }
     }
 
-    // Sync with actual stream state absolutely not guaranteed.
+    /// Sync with actual stream state absolutely not guaranteed.
     // TODO: if it matters, we can wait for a statechange event to change this
     // and even debounce while waiting
     fn toggle_playback(&mut self) {
@@ -111,6 +121,23 @@ impl App {
                 self.paused = true;
             }
         };
+    }
+
+    fn incr_volume(&mut self) {
+        let new = self.audio_vol.set(self.audio_vol.val() + 0.1);
+        self.set_volume(new);
+    }
+
+    fn decr_volume(&mut self) {
+        let new = self.audio_vol.set(self.audio_vol.val() - 0.1);
+        self.set_volume(new);
+    }
+
+    /// Sync with stream state also not guaranteed.
+    // Ditto: could wait to set our state until update
+    fn set_volume(&mut self, vol: Volume) {
+        self.events.set_volume(vol);
+        self.audio_vol = vol;
     }
 
     /// Try-compile and play new are one operation from the user's perspective

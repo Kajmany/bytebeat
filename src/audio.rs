@@ -8,12 +8,47 @@ use pipewire::{
     stream::{Stream, StreamFlags, StreamState},
 };
 use pw::properties::properties;
-use tracing::{info, trace, warn};
+use tracing::{error, info, trace, warn};
 
 use crate::{event::Event, parser};
 
 const CHANNELS: usize = 2;
 const STRIDE: usize = size_of::<u8>() * CHANNELS;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+/// Wrapped float that can represent no volume `[Volume::MUTE]` or
+/// normal (not amplified) volume `[Volume::MAX]`.
+/// Same range as `[libspa_sys::SPA_PROP_volume]`
+pub struct Volume(f32);
+
+impl Default for Volume {
+    fn default() -> Self {
+        Self::new(0.5)
+    }
+}
+
+impl Volume {
+    pub const MUTE: Self = Self(0.0);
+    pub const MAX: Self = Self(1.0);
+
+    pub fn new(value: f32) -> Self {
+        Self(value.clamp(Self::MUTE.val(), Self::MAX.val()))
+    }
+
+    pub fn set(&self, val: f32) -> Self {
+        Self(val.clamp(Self::MUTE.val(), Self::MAX.val()))
+    }
+
+    pub fn val(&self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Volume {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.0}%", self.0 * 100.0)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum AudioEvent {
@@ -39,13 +74,14 @@ pub enum StreamStatus {
 pub enum AudioCommand {
     Play,
     Pause,
+    SetVolume(Volume),
     NewBeat(parser::Beat),
 }
 
 struct AudioState {
-    pub t: i32,
-    pub event_tx: mpsc::Sender<Event>,
-    pub beat: parser::Beat,
+    t: i32,
+    event_tx: mpsc::Sender<Event>,
+    beat: parser::Beat,
 }
 
 impl AudioState {
@@ -93,6 +129,9 @@ pub fn main(
             AudioCommand::Pause => _stream_cmd.set_active(false).unwrap(),
             AudioCommand::NewBeat(beat) => {
                 _state_cmd.borrow_mut().beat = beat;
+            }
+            AudioCommand::SetVolume(vol) => {
+                set_volume(&_stream_cmd, vol);
             }
         }
     });
@@ -150,6 +189,8 @@ pub fn main(
         StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
         &mut params,
     )?;
+    // TODO: Starting at Max is uncomfortable for my system, but is it just me?
+    set_volume(&stream, Volume::default());
     stream.set_active(false)?;
 
     info!("pipewire thread startup complete, starting main loop");
@@ -169,7 +210,7 @@ fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
                 for i in 0..n_frames {
                     // I thought walking an AST like this in a RT audio loop would cause like a million xruns,
                     // but pw-top stats are about the same as when it was hardcoded. Crazy!
-                    let value = state.beat.eval(state.t);
+                    let val = state.beat.eval(state.t);
                     state.t += 1;
 
                     // Copy it across strides
@@ -177,7 +218,7 @@ fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
                         let start = i * STRIDE + (c * size_of::<u8>());
                         let end = start + size_of::<u8>();
                         let chan = &mut slice[start..end];
-                        chan.copy_from_slice(&u8::to_le_bytes(value));
+                        chan.copy_from_slice(&u8::to_le_bytes(val));
                     }
                 }
                 n_frames
@@ -191,4 +232,14 @@ fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
             *chunk.size_mut() = (STRIDE * n_frames) as _;
         }
     }
+}
+
+fn set_volume(stream: &Stream, volume: Volume) {
+    const _: () = assert!(CHANNELS == 2, "The way we set this only works on stereo!");
+    // We modify the stream properties rather than doing it ourselves.
+    // Trust pipewire can do it better than f32 * u8 -> u8
+    let vol_val = volume.val();
+    let _ = stream
+        .set_control(libspa_sys::SPA_PROP_volume, &[vol_val, vol_val])
+        .inspect_err(|e| error!("audio thread reported problem changing volume: {}", e));
 }

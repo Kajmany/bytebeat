@@ -1,4 +1,4 @@
-use crate::audio::{AudioCommand, AudioEvent};
+use crate::audio::{AudioCommand, AudioEvent, Volume};
 use crate::parser::{self};
 use color_eyre::eyre::WrapErr;
 use crossterm::event::{self, Event as CrosstermEvent};
@@ -62,6 +62,12 @@ impl EventHandler {
     pub fn stream_pause(&self) {
         trace!("event handler sending pause command");
         let _ = self.audio_sender.send(AudioCommand::Pause);
+    }
+
+    /// Enqueue new audio level command for the audio thread to recieve.
+    pub fn set_volume(&self, vol: Volume) {
+        trace!("event handler sending volume command");
+        let _ = self.audio_sender.send(AudioCommand::SetVolume(vol));
     }
 
     /// Attempt to compile a new beat. Return an error, or send it to the audio thread if successful.

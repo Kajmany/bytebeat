@@ -1,4 +1,4 @@
-use crate::{App, audio::StreamStatus};
+use crate::{App, app::volume, audio::StreamStatus};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -63,10 +63,20 @@ impl Widget for &mut App {
 
         self.beat_input.render(main_interior[2], buf);
         // Status bar text must be rendered before status bar
+        let status_area = status_block.inner(main_interior[3]);
+        let status_layout = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Length(30),
+            Constraint::Length(1),
+        ])
+        .split(status_area);
+
         Paragraph::new(stream_status)
             .centered()
             .style(Style::default().add_modifier(Modifier::BOLD))
-            .render(status_block.inner(main_interior[3]), buf);
+            .render(status_layout[0], buf);
+
+        volume::render(status_layout[1], buf, &self.audio_vol);
         status_block.render(main_interior[3], buf);
     }
 }
