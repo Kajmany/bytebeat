@@ -3,13 +3,21 @@ use crate::parser::{self};
 use color_eyre::eyre::WrapErr;
 use crossterm::event::{self, Event as CrosstermEvent};
 use std::thread;
+use std::time::Instant;
 use std::{sync::mpsc, time::Duration};
 use tracing::{info, trace};
 
+/// The frequency at which tick events are emitted.
+const TICK_FPS: f64 = 30.0;
+
 #[derive(Clone, Debug)]
 pub enum Event {
+    /// Wraps `[CrosstermEvent`] sent from the terminal. Includes resizes, keystrokes, etc
     Crossterm(CrosstermEvent),
+    /// Wraps `[AudioEvent`] sent from the audio thread.
     Audio(AudioEvent),
+    /// Regularly scheduled from the `[EventThread`].
+    Tick,
 }
 
 /// Terminal event handler.
@@ -83,7 +91,6 @@ impl EventHandler {
 }
 
 /// A thread that handles reading crossterm events and emitting tick events on a regular schedule.
-// TODO: This is maybe useless unless we want ticks later
 struct EventThread {
     /// Event term_sender channel.
     term_sender: mpsc::Sender<Event>,
@@ -100,11 +107,17 @@ impl EventThread {
     /// This function polls for crossterm events.
     fn run(self) -> color_eyre::Result<()> {
         info!("event thread loop starting");
+        let tick_interval = Duration::from_secs_f64(1.0 / TICK_FPS);
+        let mut last_tick = Instant::now();
         loop {
+            // emit tick events at a fixed rate
+            let timeout = tick_interval.saturating_sub(last_tick.elapsed());
+            if timeout == Duration::ZERO {
+                last_tick = Instant::now();
+                self.send(Event::Tick);
+            }
             // poll for crossterm events
-            if event::poll(Duration::from_millis(100))
-                .wrap_err("failed to poll for crossterm events")?
-            {
+            if event::poll(timeout).wrap_err("failed to poll for crossterm events")? {
                 let event = event::read().wrap_err("failed to read crossterm event")?;
                 trace!("event thread recieved crossterm event: {:?}", event);
                 self.send(Event::Crossterm(event));

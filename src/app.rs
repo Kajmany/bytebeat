@@ -61,8 +61,15 @@ impl App {
                 info!("app recieved audio state change: {:?}", event);
                 self.audio_state = event;
             }
+            Event::Tick => self.tick(),
         }
         Ok(())
+    }
+
+    /// Fires on recieving messages from the event thread
+    fn tick(&self) {
+        // TODO: We'll just be updating the place of the visualizer widget
+        ()
     }
 
     fn handle_key_event(&mut self, event: KeyEvent) {
