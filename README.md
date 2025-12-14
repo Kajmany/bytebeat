@@ -13,7 +13,8 @@ In fact, several good reasons exist for not doing so, but I ignored them.
     - TODO: Verify this!
 
 # Features
-- Responsive TUI: Cross-platform, reasonably responsive (thanks event-loop template!)
+- Wow, Cool TUI(?): Cross-platform, reasonably responsive (thanks event-loop template!)
+- Wave Visualizer: Like the [DollChan scope](https://github.com/SthephanShinkufag/bytebeat-composer), but worse. They aren't limited to braille characters, in my defense.
 - Audio Backend: Traditional 8000Hz U8 samples sent via Pipewire only, using the Stream API. Resampling is outsourced to Pipewire.
 - Basic code entry: Single line, with current-character highlighting and the ability to jump cursor to whitespace boundaries.
 - Dynamic code evaluation: Supports C-syntax and operators needed for classical bytebeat codes. 't' and intermediates are i32 while output wraps around to u8.
@@ -37,7 +38,7 @@ In fact, several good reasons exist for not doing so, but I ignored them.
 - Audio Backends
     - Windows via WASAPI OR Rust cpal (Probably)
     - MacOS via ??? (Probably not)
-- Wave Visualizer! Real feather in the hat. Can use Ratatui Canvas and share a ring buffer with audio thread.
+- HD Wave Visualizer: Kind of ridiculous, but it's theoretically possible on Sixel/Kitty Graphics supporting terminals to pack our own image buffers and draw the visualizer with them. Might perform too slowly to be viable.
 - Popup modal & toggleable focus
     - Help section (probably not in favor of README)
     - Song library?

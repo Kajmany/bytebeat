@@ -4,14 +4,24 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+color-eyre = "0.6.5" # TODO: Maybe not really important?
 clap = { version = "4.5.53", features = ["derive"] }
-color-eyre = "0.6.5"
+ratatui = "0.29.0"
 crossterm = "0.29.0"
+
+# Bindings for libspa (used for Pipewire) we have to reference directly sometimes
 libspa-sys = "0.9.2"
 pipewire = "0.9.2"
-ratatui = "0.29.0"
-thiserror = "2.0.17"
-tracing = "0.1.43"
+pipewire-sys = "0.9.2"
+# Audio thread passes samples to visualizer widget locklessly with this
+rtrb = "0.3.2"
+# This seemed like the least-awful idea for juggling state in the Audio thread
+arc-swap = "1.7.1"
 
+# Cuts error boilerplate without losing context
+thiserror = "2.0.17"
+
+tracing = "0.1.43"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+# Provides a log display widget and replaces tracing_appender for file writing logs
 tui-logger = { version = "0.17.4", features = ["crossterm", "tracing-support"] }

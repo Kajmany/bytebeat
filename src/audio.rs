@@ -1,4 +1,13 @@
-use std::{cell::RefCell, rc::Rc, sync::mpsc};
+use std::{
+    cell::RefCell,
+    mem,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicI32, Ordering},
+        mpsc,
+    },
+    time::Duration,
+};
 
 use pipewire::{
     self as pw,
@@ -79,18 +88,33 @@ pub enum AudioCommand {
 }
 
 struct AudioState {
-    t: i32,
+    // Owned by thread
+    /// Used internally to decide what sample to calculate next
+    t_write: i32,
+    /// Used in callbacks to communicate with the `[crate::event::EventHandler]`
     event_tx: mpsc::Sender<Event>,
     beat: parser::Beat,
+
+    // Shared across threads
+    /// Shared with render thread to estimate what sample is playing next (for scope widget)
+    t_play: &'static AtomicI32,
+    /// (Ideally) loaded with contiguous sample frames. Scope widget uses this to visualize
+    producer: rtrb::Producer<u8>,
 }
 
 impl AudioState {
-    pub fn new(event_tx: mpsc::Sender<Event>) -> AudioState {
+    pub fn new(
+        event_tx: mpsc::Sender<Event>,
+        producer: rtrb::Producer<u8>,
+        t_play: &'static AtomicI32,
+    ) -> AudioState {
         AudioState {
-            t: 0,
+            t_write: 0,
+            t_play,
             event_tx,
             // TODO: Not a pretty way to do defaults
             beat: parser::Beat::compile("t*(42&t>>10)").unwrap(),
+            producer,
         }
     }
 }
@@ -98,9 +122,11 @@ impl AudioState {
 pub fn main(
     event_tx: mpsc::Sender<Event>,
     command_rx: pipewire::channel::Receiver<AudioCommand>,
+    producer: rtrb::Producer<u8>,
+    t_play: &'static AtomicI32,
 ) -> Result<(), pw::Error> {
     info!("pipewire thread starting");
-    let state = Rc::new(RefCell::new(AudioState::new(event_tx)));
+    let state = Rc::new(RefCell::new(AudioState::new(event_tx, producer, t_play)));
     pw::init();
     let main_loop: &'static mut MainLoopRc = Box::leak(Box::new(MainLoopRc::new(None)?));
     let context: &'static mut ContextRc =
@@ -118,8 +144,8 @@ pub fn main(
         },
     )?;
 
-    // FIXME: Uhh, this is not robust w.r.t sync with App state
-    //   but it holds up to spamming toggle so it works for now...?
+    // FIXME: This clone a rc'd box business might be really bad but it seems to work for now
+    // Attach a command callback to the mpsc rx so event handler can bark at us
     let _stream_cmd = stream.clone();
     let _state_cmd = state.clone();
     let _recv = command_rx.attach(main_loop.loop_(), move |msg| {
@@ -135,6 +161,18 @@ pub fn main(
             }
         }
     });
+
+    // Attach a timer so we can regularly send the current 't' being played to the scope widget
+    let _stream_t = stream.clone();
+    let _state_t = state.clone();
+    let t_sync_timer = main_loop.loop_().add_timer(move |_| {
+        let head = estimate_play_head(&_stream_t, _state_t.borrow().t_write);
+        _state_t.borrow().t_play.store(head, Ordering::Relaxed);
+    });
+    t_sync_timer.update_timer(
+        Some(Duration::from_millis(100)),
+        Some(Duration::from_millis(100)),
+    );
 
     let _listener = stream
         .add_local_listener_with_user_data(state)
@@ -210,15 +248,22 @@ fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
                 for i in 0..n_frames {
                     // I thought walking an AST like this in a RT audio loop would cause like a million xruns,
                     // but pw-top stats are about the same as when it was hardcoded. Crazy!
-                    let val = state.beat.eval(state.t);
-                    state.t += 1;
+                    let val = state.beat.eval(state.t_write);
+                    state.t_write += 1;
 
                     // Copy it across strides
                     for c in 0..CHANNELS {
                         let start = i * STRIDE + (c * size_of::<u8>());
                         let end = start + size_of::<u8>();
                         let chan = &mut slice[start..end];
+
                         chan.copy_from_slice(&u8::to_le_bytes(val));
+                    }
+
+                    // Push to visualization buffer (best effort)
+                    // We only need one channel for visualization
+                    if !state.producer.is_full() {
+                        let _ = state.producer.push(val);
                     }
                 }
                 n_frames
@@ -242,4 +287,22 @@ fn set_volume(stream: &Stream, volume: Volume) {
     let _ = stream
         .set_control(libspa_sys::SPA_PROP_volume, &[vol_val, vol_val])
         .inspect_err(|e| error!("audio thread reported problem changing volume: {}", e));
+}
+
+/// RT Safe. Shouldn't mutate stream at all. Estimates which 't' we're playing next
+///
+/// We want to know which 't' sample is playing now
+/// We know how many t's we've produced
+/// We're about to know how many t's are queued, and how many are buffered
+fn estimate_play_head(stream: &Stream, t: i32) -> i32 {
+    unsafe {
+        // It's all numbers inside so zeroed is fine
+        let mut time: pipewire_sys::pw_time = mem::zeroed();
+        pipewire_sys::pw_stream_get_time_n(
+            stream.as_raw_ptr(),
+            &mut time,
+            mem::size_of::<pipewire_sys::pw_time>(),
+        );
+        t - (time.queued as i32 + time.buffered as i32)
+    }
 }

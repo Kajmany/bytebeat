@@ -1,4 +1,5 @@
 use crate::{App, app::volume, audio::StreamStatus};
+
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -26,9 +27,9 @@ impl Widget for &mut App {
             .direction(Direction::Vertical)
             // One big widget area, and a little bottom bar
             .constraints(vec![
-                Constraint::Percentage(40),
-                Constraint::Percentage(40),
-                Constraint::Percentage(18),
+                Constraint::Percentage(75),
+                Constraint::Percentage(15),
+                Constraint::Percentage(10),
                 Constraint::Min(2),
             ])
             .split(main_block.inner(area));
@@ -46,10 +47,9 @@ impl Widget for &mut App {
         };
 
         main_block.render(area, buf);
-        // Dummy text (for now) TODO: Wave form widget!
-        Paragraph::new("Pretend this is a wave form visualizer. Trippy!")
-            .centered()
-            .render(main_interior[0], buf);
+
+        // Waveform visualization
+        self.scope.render(main_interior[0], buf);
 
         tui_logger::TuiLoggerWidget::default()
             .block(Block::bordered().title(" Log "))

@@ -1,5 +1,5 @@
 use color_eyre::Result;
-use std::thread;
+use std::{sync::atomic::AtomicI32, thread};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, prelude::*};
 use tui_logger::{LevelFilter, TuiLoggerFile};
@@ -53,16 +53,27 @@ fn main() -> Result<()> {
 
     info!("app starting");
     // Somewhat ugly piping between threads done here
+
     // So commands to change stream can flow events -> audio
     let (command_tx, command_rx) = pipewire::channel::channel::<AudioCommand>();
+
+    // For audio visualization widget. Audio thread produces, App consumes
+    // 64000 samples @ 8kHz = 8 seconds of buffer (and 62.5KiB)
+    // We'll probably only want to display 4 at once, maximum
+    let (producer, consumer) = rtrb::RingBuffer::<u8>::new(64000);
+    // Represents that the 't'th-ISH sample will play next
+    // Audio thread gets a to set it, App gets a copy to read it
+    // The scope widget needs this to look useful and track where-about we're at.
+    static T_PLAY: AtomicI32 = AtomicI32::new(0);
+
     let events = EventHandler::new(command_tx);
     // TODO: maybe hoist channel creation for term here also
     let terminal_tx = events.get_term_sender();
     // Pipewire loop needs to tx states to App and rx commands from it (brokered by event handler)
-    thread::spawn(move || crate::audio::main(terminal_tx, command_rx));
+    thread::spawn(move || crate::audio::main(terminal_tx, command_rx, producer, &T_PLAY));
     // App owns the event handler struct (but NOT the event thread!)
     let terminal = ratatui::init();
-    let result = App::new(events).run(terminal);
+    let result = App::new(events, consumer, &T_PLAY).run(terminal);
     ratatui::restore();
     info!("app done: {:?}", result);
     result

@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicI32;
+
 use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::DefaultTerminal;
@@ -10,6 +12,7 @@ use crate::{
 };
 
 mod input;
+mod scope;
 mod ui;
 mod volume;
 
@@ -25,10 +28,15 @@ pub struct App {
     /// Representing a valid interpretable bytebeat code
     // TODO: undo/redo system shouldn't be that hard. later.
     beat_input: LineInput,
+    scope: scope::Scope,
 }
 
 impl App {
-    pub fn new(events: EventHandler) -> Self {
+    pub fn new(
+        events: EventHandler,
+        consumer: rtrb::Consumer<u8>,
+        t_play: &'static AtomicI32,
+    ) -> Self {
         Self {
             running: true,
             events,
@@ -37,6 +45,7 @@ impl App {
             audio_vol: Volume::default(),
             // TODO: Not a pretty way to do defaults
             beat_input: LineInput::from_str("t*(42&t>>10)"),
+            scope: scope::Scope::new(consumer, t_play),
         }
     }
 
@@ -67,9 +76,9 @@ impl App {
     }
 
     /// Fires on recieving messages from the event thread
-    fn tick(&self) {
-        // TODO: We'll just be updating the place of the visualizer widget
-        ()
+    fn tick(&mut self) {
+        // Update the scope with any new samples
+        self.scope.update();
     }
 
     fn handle_key_event(&mut self, event: KeyEvent) {
