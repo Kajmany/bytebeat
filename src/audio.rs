@@ -1,20 +1,21 @@
 use std::{
-    cell::RefCell,
     mem,
-    rc::Rc,
     sync::{
+        Arc, LazyLock,
         atomic::{AtomicI32, Ordering},
         mpsc,
     },
     time::Duration,
 };
 
+use arc_swap::ArcSwap;
+use derive_new::new;
 use pipewire::{
     self as pw,
     context::ContextRc,
     main_loop::MainLoopRc,
     spa::{self, utils::Direction},
-    stream::{Stream, StreamFlags, StreamState},
+    stream::{Stream, StreamFlags, StreamRc, StreamState},
 };
 use pw::properties::properties;
 use tracing::{error, info, trace, warn};
@@ -87,36 +88,41 @@ pub enum AudioCommand {
     NewBeat(parser::Beat),
 }
 
-struct AudioState {
-    // Owned by thread
-    /// Used internally to decide what sample to calculate next
-    t_write: i32,
-    /// Used in callbacks to communicate with the `[crate::event::EventHandler]`
-    event_tx: mpsc::Sender<Event>,
-    beat: parser::Beat,
+// None of these structs are necessary. They're hopefully optimized out
+// They're used to make it clearer what state each callback relies upon
 
-    // Shared across threads
-    /// Shared with render thread to estimate what sample is playing next (for scope widget)
-    t_play: &'static AtomicI32,
-    /// (Ideally) loaded with contiguous sample frames. Scope widget uses this to visualize
-    producer: rtrb::Producer<u8>,
+/// Used in the `[state_changed]` callback
+#[derive(new)]
+struct StateChangeState {
+    // i'm so semantically satiated right now
+    /// Used to communicate with the `[crate::event::EventHandler]`
+    event_tx: mpsc::Sender<Event>,
 }
 
-impl AudioState {
-    pub fn new(
-        event_tx: mpsc::Sender<Event>,
-        producer: rtrb::Producer<u8>,
-        t_play: &'static AtomicI32,
-    ) -> AudioState {
-        AudioState {
-            t_write: 0,
-            t_play,
-            event_tx,
-            // TODO: Not a pretty way to do defaults
-            beat: parser::Beat::compile("t*(42&t>>10)").unwrap(),
-            producer,
-        }
-    }
+/// Used in the mpsc reading callback (which takes commands)
+#[derive(new)]
+struct CommandState {
+    stream: StreamRc,
+    beat: &'static ArcSwap<parser::Beat>,
+}
+
+/// Used in the attached timer which updates the 'play head'
+/// for the benefit of the TUI
+#[derive(new)]
+struct TimerState {
+    t_write: &'static AtomicI32,
+    stream: StreamRc,
+    t_play: &'static AtomicI32,
+}
+
+/// Passed solely to the `[on_process]` callback
+#[derive(new)]
+struct ProcessState {
+    /// Used internally to decide what sample to calculate next
+    t_write: &'static AtomicI32,
+    beat: &'static ArcSwap<parser::Beat>,
+    /// (Ideally) loaded with contiguous sample frames. Scope widget uses this to visualize
+    producer: rtrb::Producer<u8>,
 }
 
 pub fn main(
@@ -126,7 +132,6 @@ pub fn main(
     t_play: &'static AtomicI32,
 ) -> Result<(), pw::Error> {
     info!("pipewire thread starting");
-    let state = Rc::new(RefCell::new(AudioState::new(event_tx, producer, t_play)));
     pw::init();
     let main_loop: &'static mut MainLoopRc = Box::leak(Box::new(MainLoopRc::new(None)?));
     let context: &'static mut ContextRc =
@@ -144,30 +149,38 @@ pub fn main(
         },
     )?;
 
-    // FIXME: This clone a rc'd box business might be really bad but it seems to work for now
+    // Used in a few callbacks
+    static T_WRITE: AtomicI32 = AtomicI32::new(0);
+    static BEAT: LazyLock<ArcSwap<parser::Beat>> =
+        // TODO: Make this default beat configurable
+        LazyLock::new(|| {
+            ArcSwap::new(Arc::new(parser::Beat::compile("t*(42&t>>10)").unwrap()))
+        });
+    // See struct declarations
+    let sts = StateChangeState::new(event_tx);
+    let ts = TimerState::new(&T_WRITE, stream.clone(), t_play);
+    let ps = ProcessState::new(&T_WRITE, &BEAT, producer);
+    let cs = CommandState::new(stream.clone(), &BEAT);
+
     // Attach a command callback to the mpsc rx so event handler can bark at us
-    let _stream_cmd = stream.clone();
-    let _state_cmd = state.clone();
     let _recv = command_rx.attach(main_loop.loop_(), move |msg| {
         trace!("pipewire thread received command: {:?}", msg);
         match msg {
-            AudioCommand::Play => _stream_cmd.set_active(true).unwrap(),
-            AudioCommand::Pause => _stream_cmd.set_active(false).unwrap(),
+            AudioCommand::Play => cs.stream.set_active(true).unwrap(),
+            AudioCommand::Pause => cs.stream.set_active(false).unwrap(),
             AudioCommand::NewBeat(beat) => {
-                _state_cmd.borrow_mut().beat = beat;
+                cs.beat.store(Arc::new(beat));
             }
             AudioCommand::SetVolume(vol) => {
-                set_volume(&_stream_cmd, vol);
+                set_volume(&cs.stream, vol);
             }
         }
     });
 
     // Attach a timer so we can regularly send the current 't' being played to the scope widget
-    let _stream_t = stream.clone();
-    let _state_t = state.clone();
     let t_sync_timer = main_loop.loop_().add_timer(move |_| {
-        let head = estimate_play_head(&_stream_t, _state_t.borrow().t_write);
-        _state_t.borrow().t_play.store(head, Ordering::Relaxed);
+        let head = estimate_play_head(&ts.stream, ts.t_write.load(Ordering::Relaxed));
+        ts.t_play.store(head, Ordering::Relaxed);
     });
     t_sync_timer.update_timer(
         Some(Duration::from_millis(100)),
@@ -175,12 +188,14 @@ pub fn main(
     );
 
     let _listener = stream
-        .add_local_listener_with_user_data(state)
+        .add_local_listener_with_user_data(ps)
         .process(on_process)
-        .state_changed(|_, state, _, new| {
-            // TODO: Have a sense of shame. Do better.
+        .state_changed(move |_, _, _, new| {
             let new_state = match new {
-                StreamState::Error(_) => StreamStatus::Error,
+                StreamState::Error(e) => {
+                    error!("pipewire thread reports stream error: {:?}", e);
+                    StreamStatus::Error
+                }
                 StreamState::Unconnected => StreamStatus::Unconnected,
                 StreamState::Connecting => StreamStatus::Connecting,
                 StreamState::Paused => StreamStatus::Paused,
@@ -188,8 +203,7 @@ pub fn main(
             };
 
             trace!("pipewire thread sending state change: {:?}", new_state);
-            let _ = state
-                .borrow()
+            let _ = sts
                 .event_tx
                 .send(Event::Audio(AudioEvent::StateChange(new_state)));
         })
@@ -237,8 +251,7 @@ pub fn main(
     Ok(())
 }
 
-fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
-    let mut state = state.borrow_mut();
+fn on_process(s: &Stream, state: &mut ProcessState) {
     match s.dequeue_buffer() {
         None => warn!("no buffer available for pipewire process thread"),
         Some(mut buffer) => {
@@ -248,8 +261,13 @@ fn on_process(s: &Stream, state: &mut Rc<RefCell<AudioState>>) {
                 for i in 0..n_frames {
                     // I thought walking an AST like this in a RT audio loop would cause like a million xruns,
                     // but pw-top stats are about the same as when it was hardcoded. Crazy!
-                    let val = state.beat.eval(state.t_write);
-                    state.t_write += 1;
+                    let val = state
+                        .beat
+                        .load()
+                        .eval(state.t_write.load(Ordering::Relaxed));
+                    state
+                        .t_write
+                        .store(state.t_write.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
 
                     // Copy it across strides
                     for c in 0..CHANNELS {
@@ -294,7 +312,7 @@ fn set_volume(stream: &Stream, volume: Volume) {
 /// We want to know which 't' sample is playing now
 /// We know how many t's we've produced
 /// We're about to know how many t's are queued, and how many are buffered
-fn estimate_play_head(stream: &Stream, t: i32) -> i32 {
+fn estimate_play_head(stream: &Stream, t_write: i32) -> i32 {
     unsafe {
         // It's all numbers inside so zeroed is fine
         let mut time: pipewire_sys::pw_time = mem::zeroed();
@@ -303,6 +321,6 @@ fn estimate_play_head(stream: &Stream, t: i32) -> i32 {
             &mut time,
             mem::size_of::<pipewire_sys::pw_time>(),
         );
-        t - (time.queued as i32 + time.buffered as i32)
+        t_write - (time.queued as i32 + time.buffered as i32)
     }
 }

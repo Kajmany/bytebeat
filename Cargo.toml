@@ -25,3 +25,5 @@ tracing = "0.1.43"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 # Provides a log display widget and replaces tracing_appender for file writing logs
 tui-logger = { version = "0.17.4", features = ["crossterm", "tracing-support"] }
+
+derive-new = "0.7.0"
