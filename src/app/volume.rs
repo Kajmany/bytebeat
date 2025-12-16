@@ -1,4 +1,4 @@
-//! This isn't a real widget. It has no state nor any need for it. Might be expanded into one later.
+//! Draws the volume slider.This isn't a real widget. It has no state nor any need for it. Might be expanded into one later.
 use ratatui::{
     buffer::Buffer,
     layout::Rect,

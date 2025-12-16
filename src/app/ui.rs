@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
-/// Used in calculation for [`BeatInput::height_hint`]
+/// Used in calculation for [`crate::app::BeatInput::height_hint`]
 /// May show another line for more errors
 /// Not everything wrong becomes a discrete error, it's actually hard to rack up this many
 pub const MAX_ERRORS_SHOWN: usize = 3;

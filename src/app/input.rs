@@ -1,7 +1,5 @@
 //! Input widget for editing (and submitting) a bytebeat code
 //!
-//! Minimally styled: a line of text with highlighted cursor only, so it needs it's own frame.
-//!
 //! Probably doesn't handled grapheme clusters prettily, but theoretically
 //! unicode-respecting if 'add' is used carefully.
 use ratatui::{
