@@ -5,10 +5,15 @@
 //! Probably doesn't handled grapheme clusters prettily, but theoretically
 //! unicode-respecting if 'add' is used carefully.
 use ratatui::{
-    style::{Modifier, Style},
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Widget,
+    widgets::{Block, BorderType, Paragraph, Widget},
 };
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::{app::ui, parser::ParseError};
 /// Extremely simple single-buffer utf-8 input widget for small texts.
 #[derive(Default, Debug)]
 pub struct LineInput {
@@ -114,5 +119,114 @@ impl Widget for &LineInput {
             renderable.push_span(right);
         }
         renderable.render(area, buf);
+    }
+}
+
+/// Wraps `[LineInput]` for top-level display. Responsible for displaying errors, too.
+#[derive(Debug, Default)]
+pub struct BeatInput {
+    input: LineInput,
+    errors: Vec<ParseError>,
+}
+
+impl BeatInput {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        Self {
+            input: LineInput::from_str(s),
+            errors: Vec::new(),
+        }
+    }
+
+    pub fn handle_key_event(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Backspace => {
+                self.input.remove();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.input.add(c);
+                }
+            }
+            KeyCode::Left => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.input.jump_left();
+                } else {
+                    self.input.shift_left(1);
+                }
+            }
+            KeyCode::Right => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.input.jump_right();
+                } else {
+                    self.input.shift_right(1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn set_errors(&mut self, errors: Vec<ParseError>) {
+        self.errors = errors;
+    }
+
+    pub fn clear_errors(&mut self) {
+        self.errors.clear();
+    }
+
+    pub fn get_buffer(&self) -> String {
+        self.input.get_buffer()
+    }
+
+    pub fn height_hint(&self) -> u16 {
+        // 2 for the block, 1 for the LineInput, up to n errors + 1 'n more...'
+        (2 + 1 + self.errors.len().min(ui::MAX_ERRORS_SHOWN + 1)) as u16
+    }
+}
+
+impl Widget for &BeatInput {
+    fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer)
+    where
+        Self: Sized,
+    {
+        let block = Block::bordered()
+            .title(" Input ")
+            .border_type(BorderType::Rounded);
+
+        let inner_area = block.inner(area);
+        block.render(area, buf);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(inner_area);
+
+        self.input.render(chunks[0], buf);
+
+        if !self.errors.is_empty() {
+            let mut error_text: Vec<Line> = self
+                .errors
+                .iter()
+                .take(ui::MAX_ERRORS_SHOWN)
+                .map(|e| {
+                    Line::from(vec![Span::styled(
+                        format!("Error: {}", e),
+                        Style::default().fg(Color::Red),
+                    )])
+                })
+                .collect();
+
+            if self.errors.len() > ui::MAX_ERRORS_SHOWN {
+                error_text.push(Line::from(vec![Span::styled(
+                    format!("...and {} more", self.errors.len() - ui::MAX_ERRORS_SHOWN),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )]));
+            }
+
+            Paragraph::new(error_text).render(chunks[1], buf);
+        }
     }
 }

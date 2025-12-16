@@ -1,12 +1,12 @@
 use std::sync::atomic::AtomicI32;
 
 use color_eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::DefaultTerminal;
 use tracing::{info, trace};
 
 use crate::{
-    app::input::LineInput,
+    app::input::BeatInput,
     audio::{AudioEvent, StreamStatus, Volume},
     event::{Event, EventHandler},
 };
@@ -25,9 +25,9 @@ pub struct App {
     audio_state: StreamStatus,
     /// No boost, only decrease.
     audio_vol: Volume,
-    /// Representing a valid interpretable bytebeat code
     // TODO: undo/redo system shouldn't be that hard. later.
-    beat_input: LineInput,
+    beat_input: BeatInput,
+
     scope: scope::Scope,
 }
 
@@ -44,7 +44,8 @@ impl App {
             audio_state: StreamStatus::Unconnected,
             audio_vol: Volume::default(),
             // TODO: Not a pretty way to do defaults
-            beat_input: LineInput::from_str("t*(42&t>>10)"),
+            beat_input: BeatInput::from_str("t*(42&t>>10)"),
+
             scope: scope::Scope::new(consumer, t_play),
         }
     }
@@ -86,32 +87,15 @@ impl App {
             // We can always exit
             KeyCode::F(3) => self.quit(),
             KeyCode::F(4) => self.toggle_playback(),
+
             // For now, we assume we're always focused on the input field
-            KeyCode::Backspace => {
-                self.beat_input.remove();
+            KeyCode::Backspace | KeyCode::Char(_) | KeyCode::Left | KeyCode::Right => {
+                self.beat_input.handle_key_event(event);
             }
-            KeyCode::Char(c) => {
-                if !c.is_control() {
-                    // This could be any unicode so this doesn't mean we're safe
-                    // But we probably don't need to care
-                    self.beat_input.add(c);
-                }
-            }
+
+            // For beat input, delegate everything besides this so App has full control of events
             KeyCode::Enter => self.try_beat(),
-            KeyCode::Left => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.beat_input.jump_left();
-                } else {
-                    self.beat_input.shift_left(1);
-                }
-            }
-            KeyCode::Right => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.beat_input.jump_right();
-                } else {
-                    self.beat_input.shift_right(1);
-                }
-            }
+
             KeyCode::Up => {
                 self.incr_volume();
             }
@@ -157,9 +141,11 @@ impl App {
     }
 
     /// Try-compile and play new are one operation from the user's perspective
-    fn try_beat(&self) {
-        // FIXME: Display error to user
-        self.events.new_beat(&self.beat_input.get_buffer()).unwrap();
+    fn try_beat(&mut self) {
+        match self.events.new_beat(&self.beat_input.get_buffer()) {
+            Ok(_) => self.beat_input.clear_errors(),
+            Err(errs) => self.beat_input.set_errors(errs),
+        }
     }
 
     /// Causes break and clean exit on next [`App::run`] loop

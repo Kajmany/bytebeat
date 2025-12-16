@@ -127,18 +127,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                     let err = ParseError::LexError(e.clone(), span);
                     self.errors.push(err);
                     self.advance();
-                    // In infix position, if we hit an error, we might want to return an Error node via some mechanism
-                    // But effectively we are expecting an operator.
-                    // If we assume the user missed an operator? Or typed garbage?
-                    // Let's break the loop, but allow the parse to finish with accumulated errors.
-                    // Actually if we just break, we return `left`.
-                    // But we haven't consumed the error token if we don't advance.
-                    // We advanced above.
-                    // So we treat it as end of expression?
-                    // "recover safely"?
+                    // TODO: This probably leaves a lot of gaps but not high priority
+                    // this is best-effort to getting all errors we can at once
                     break;
                 }
-                _ => return Err(ParseError::ExpectedOperator(self.current.span)),
+                t => return Err(ParseError::ExpectedOperator(t.clone(), self.current.span)),
             };
 
             // Postfix ?

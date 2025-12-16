@@ -10,7 +10,8 @@ use std::ops::Deref;
 
 use self::parse::Parser;
 
-#[derive(Debug, PartialEq, Clone)]
+// Only an error path does a copy
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Token {
     /// Must be 't'
     Variable,
@@ -122,21 +123,23 @@ use tracing::error;
 pub enum ParseError {
     #[error("Unexpected end of file at {0}")]
     UnexpectedEof(Span),
-    #[error("Expected operator, found something else at {0}")]
-    ExpectedOperator(Span),
+    // TODO: not pretty that we debug fmt this (it's user facing)
+    // but I don't feel like impl fmt for every token right now
+    #[error("Expected operator, found {0:?} at {1}")]
+    ExpectedOperator(Token, Span),
     #[error("Expected matching ')' at {0}")]
     UnmatchedParenthesis(Span),
     #[error("Unexpected prefix operator: {0:?} at {1}")]
     UnexpectedPrefix(Operator, Span),
     #[error("Expected ':' in ternary expression at {0}")]
     ExpectedTernaryColon(Span),
-    #[error("Lexer error: {0} at {1}")]
+    #[error("Lexer: {0} at {1}")]
     LexError(LexError, Span),
 }
 
 /// Span is NOT attached because these errors are either in a `[Token::Err]`
 /// or in a `[ParseError::LexError]` which carries the relevant `[Span]`
-#[derive(Error, Debug, PartialEq, Clone)]
+#[derive(Error, Debug, PartialEq, Clone, Copy)]
 pub enum LexError {
     #[error("Assignment or single = not supported")]
     SolitaryEquals,
@@ -147,7 +150,7 @@ pub enum LexError {
 #[derive(Debug)]
 /// AST of a classic bytebeat function. May be evaluated for 't' into a u8 sample.
 pub struct Beat {
-    // Could be an arena but not practically necessary
+    // Could be a real arena but not practically necessary
     nodes: Vec<ASTNode>,
     root: NodeId,
 }

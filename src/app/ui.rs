@@ -7,6 +7,11 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
+/// Used in calculation for [`BeatInput::height_hint`]
+/// May show another line for more errors
+/// Not everything wrong becomes a discrete error, it's actually hard to rack up this many
+pub const MAX_ERRORS_SHOWN: usize = 3;
+
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // This could be less ugly. It'll do for now.
@@ -27,10 +32,14 @@ impl Widget for &mut App {
             .direction(Direction::Vertical)
             // One big widget area, and a little bottom bar
             .constraints(vec![
+                // Scope
                 Constraint::Percentage(75),
+                // Logs
                 Constraint::Percentage(15),
-                Constraint::Percentage(10),
-                Constraint::Min(2),
+                // Input
+                Constraint::Length(self.beat_input.height_hint()),
+                // Status bar
+                Constraint::Max(3),
             ])
             .split(main_block.inner(area));
 
