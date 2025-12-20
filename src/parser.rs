@@ -23,26 +23,32 @@ pub enum Token {
     Eof,
 }
 
-/// Represents the start and end occurence in the column for a type.
-/// Inclusive on both ends, so a span of [0, 0] is a single character at the start.
+pub type Column = usize;
+pub type Line = usize;
+
+/// Represents the start and end occurence of a `[Token]` in the source buffer
+/// Inclusive on both ends, so a span of [0, 0, 0] is a single character at the start.
+///
+/// No `[Token]` members may span multiple lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
-    pub start: usize,
-    pub end: usize,
+    pub line: Line,
+    pub start: Column,
+    pub end: Column,
 }
 
 impl Span {
-    pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
+    pub fn new(line: Line, start: Column, end: Column) -> Self {
+        Self { line, start, end }
     }
 }
 
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.start == self.end {
-            write!(f, "col {}", self.start)
+            write!(f, "line {} col {}", self.line, self.start)
         } else {
-            write!(f, "col {}..{}", self.start, self.end)
+            write!(f, "line {} col {}..{}", self.line, self.start, self.end)
         }
     }
 }

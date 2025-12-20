@@ -3,37 +3,50 @@
 //! Column aware, but should not be exposed to newlines yet. TODO: That!
 use std::{iter::Peekable, str::Chars};
 
-use crate::parser::LexError;
-
-use super::{Operator, Span, Spanned, Token};
+use crate::parser::{Column, LexError, Line, Operator, Span, Spanned, Token};
 
 pub struct Lexer<'a> {
     chars: Peekable<Chars<'a>>,
     // Used to create spans for tokens
     // If we enumerate chars it's not peekable anymore!
-    pos: usize,
+    line: Line,
+    col: Column,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Lexer<'a> {
         Lexer {
             chars: input.chars().peekable(),
-            pos: 0,
+            line: 0,
+            col: 0,
         }
     }
 
-    /// Advances the iterator and increments the position counter
+    /// Advances the iterator and increments position or line counter.
     fn bump(&mut self) -> Option<char> {
-        let c = self.chars.next();
-        if c.is_some() {
-            self.pos += 1;
+        match self.chars.next() {
+            Some(c) => {
+                match c {
+                    '\n' => {
+                        self.line += 1;
+                        self.col = 0;
+                    }
+                    // Still advance, but don't affect span. Lazy way to avoid lookahead here
+                    '\r' => {}
+                    // No tab support, unicode linebreaks, etc.
+                    _ => {
+                        self.col += 1;
+                    }
+                }
+                Some(c)
+            }
+            None => None,
         }
-        c
     }
 
     pub fn next(&mut self) -> Spanned<Token> {
         self.skip_whitespace();
-        let start = self.pos;
+        let (start_line, start_col) = (self.line, self.col);
         let token = match self.chars.peek() {
             Some(&c) => {
                 match c {
@@ -181,17 +194,23 @@ impl<'a> Lexer<'a> {
             None => Token::Eof,
         };
 
-        let end = if self.pos > start {
-            self.pos - 1
+        // Every arm besides Eof does a bump, so the end of THIS token is actually last column
+        let (end_line, end_col) = if self.col > start_col {
+            (self.line, self.col.saturating_sub(1))
         } else {
-            start
+            (start_line, start_col)
         };
-        Spanned::new(token, Span::new(start, end))
+
+        // We should not have any multi-line tokens
+        debug_assert!(start_line == end_line);
+
+        Spanned::new(token, Span::new(start_line, start_col, end_col))
     }
 
+    /// Skips unicode whitespace and both line-endings (\r\n, \n), not equipped for bizarre unicode linebreaks and etc.
     fn skip_whitespace(&mut self) {
         while let Some(&peeked) = self.chars.peek() {
-            if peeked.is_whitespace() {
+            if peeked.is_whitespace() || peeked == '\r' || peeked == '\n' {
                 self.bump();
             } else {
                 return;
@@ -205,15 +224,22 @@ impl<'a> Lexer<'a> {
 mod tests {
     use super::*;
 
-    fn assert_token(lexer: &mut Lexer, expected_token: Token, start: usize, end: usize) {
+    fn assert_token(
+        lexer: &mut Lexer,
+        expected_token: Token,
+        line: Line,
+        start: Column,
+        end: Column,
+    ) {
         let spanned = lexer.next();
         assert_eq!(
             spanned.node, expected_token,
-            "Token mismatch at {}-{}",
-            start, end
+            "Token mismatch at line {} col {}..{}",
+            line, start, end
         );
-        assert_eq!(spanned.span.start, start, "Start index mismatch");
-        assert_eq!(spanned.span.end, end, "End index mismatch");
+        assert_eq!(spanned.span.line, line, "Line mismatch");
+        assert_eq!(spanned.span.start, start, "Start column mismatch");
+        assert_eq!(spanned.span.end, end, "End column mismatch");
     }
 
     // Entirely 1-char lexemes without whitespace
@@ -222,14 +248,14 @@ mod tests {
         let input = "t+t";
         let mut lexer = Lexer::new(input);
 
-        // 't' at 0..1 (len 1) -> 0, 0
-        assert_token(&mut lexer, Token::Variable, 0, 0);
-        // '+' at 1..2 (len 1) -> 1, 1
-        assert_token(&mut lexer, Token::Op(Operator::Plus), 1, 1);
-        // 't' at 2..3 (len 1) -> 2, 2
-        assert_token(&mut lexer, Token::Variable, 2, 2);
+        // 't' at 0..1 (len 1) -> line 0, 0..0
+        assert_token(&mut lexer, Token::Variable, 0, 0, 0);
+        // '+' at 1..2 (len 1) -> line 0, 1..1
+        assert_token(&mut lexer, Token::Op(Operator::Plus), 0, 1, 1);
+        // 't' at 2..3 (len 1) -> line 0, 2..2
+        assert_token(&mut lexer, Token::Variable, 0, 2, 2);
 
-        assert_token(&mut lexer, Token::Eof, 3, 3);
+        assert_token(&mut lexer, Token::Eof, 0, 3, 3);
     }
 
     // 1-char lexemes with whitespace
@@ -239,65 +265,137 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // 't' at 0
-        assert_token(&mut lexer, Token::Variable, 0, 0);
+        assert_token(&mut lexer, Token::Variable, 0, 0, 0);
         // ' ' at 1 (skip)
         // '+' at 2
-        assert_token(&mut lexer, Token::Op(Operator::Plus), 2, 2);
+        assert_token(&mut lexer, Token::Op(Operator::Plus), 0, 2, 2);
         // ' ' at 3 (skip)
         // 't' at 4
-        assert_token(&mut lexer, Token::Variable, 4, 4);
+        assert_token(&mut lexer, Token::Variable, 0, 4, 4);
 
-        assert_token(&mut lexer, Token::Eof, 5, 5);
+        assert_token(&mut lexer, Token::Eof, 0, 5, 5);
     }
 
-    // realistic multi-char lexemes with whitespace
+    // multi-char lexemes with whitespace
     #[test]
     fn test_multi_char_lexemes() {
-        // "123 == 45"
-        // 012 -> 123 (len 3) -> start 0, end 2
-        // 3 -> space
-        // 45 -> == (len 2) -> start 4, end 5
-        // 6 -> space
-        // 78 -> 45 (len 2) -> start 7, end 8
         let input = "123 == 45";
         let mut lexer = Lexer::new(input);
 
-        assert_token(&mut lexer, Token::Number(123), 0, 2);
-        assert_token(&mut lexer, Token::Op(Operator::Eq), 4, 5);
-        assert_token(&mut lexer, Token::Number(45), 7, 8);
-        assert_token(&mut lexer, Token::Eof, 9, 9);
+        assert_token(&mut lexer, Token::Number(123), 0, 0, 2);
+        assert_token(&mut lexer, Token::Op(Operator::Eq), 0, 4, 5);
+        assert_token(&mut lexer, Token::Number(45), 0, 7, 8);
+        assert_token(&mut lexer, Token::Eof, 0, 9, 9);
     }
 
     #[test]
     fn test_eof_empty() {
         let input = "";
         let mut lexer = Lexer::new(input);
-        assert_token(&mut lexer, Token::Eof, 0, 0);
+        assert_token(&mut lexer, Token::Eof, 0, 0, 0);
     }
 
     #[test]
     fn test_whitespace_only() {
         let input = "   ";
         let mut lexer = Lexer::new(input);
-        assert_token(&mut lexer, Token::Eof, 3, 3);
+        assert_token(&mut lexer, Token::Eof, 0, 3, 3);
+    }
+
+    #[test]
+    fn test_newlines_lf() {
+        let input = "t\nt";
+        let mut lexer = Lexer::new(input);
+
+        // 't' (0,0)
+        assert_token(&mut lexer, Token::Variable, 0, 0, 0);
+        // '\n' increments line, resets col
+        // 't' (1,0)
+        assert_token(&mut lexer, Token::Variable, 1, 0, 0);
+        assert_token(&mut lexer, Token::Eof, 1, 1, 1);
+    }
+
+    #[test]
+    fn test_newlines_crlf() {
+        let input = "t\r\nt";
+        let mut lexer = Lexer::new(input);
+
+        // 't' (0,0)
+        assert_token(&mut lexer, Token::Variable, 0, 0, 0);
+        // '\r' ignored (no col advance), '\n' increments line, resets col
+        assert_token(&mut lexer, Token::Variable, 1, 0, 0);
+        assert_token(&mut lexer, Token::Eof, 1, 1, 1);
+    }
+
+    #[test]
+    fn test_tabs() {
+        // Tabs are treated as single-column v0v
+        let input = "t\tt";
+        let mut lexer = Lexer::new(input);
+
+        // 't' (0,0)
+        assert_token(&mut lexer, Token::Variable, 0, 0, 0);
+        // 't' (again) starts at (0,2).
+        assert_token(&mut lexer, Token::Variable, 0, 2, 2);
+        assert_token(&mut lexer, Token::Eof, 0, 3, 3);
+    }
+
+    #[test]
+    fn test_mixed_whitespace_multiline() {
+        let input = "t \n  t";
+        let mut lexer = Lexer::new(input);
+
+        // 't' (0,0). Ends at (0,0). POS is (0,1).
+        assert_token(&mut lexer, Token::Variable, 0, 0, 0);
+
+        // 't' starts (1,2). Ends (1,2). Pos (1,3).
+        assert_token(&mut lexer, Token::Variable, 1, 2, 2);
+        assert_token(&mut lexer, Token::Eof, 1, 3, 3);
+    }
+
+    #[test]
+    fn test_no_tokens_across_newline() {
+        // This should be two bitwise Or instead of one Logical Or
+        let input = "t |\n| 5";
+        let mut lexer = Lexer::new(input);
+
+        assert_token(&mut lexer, Token::Variable, 0, 0, 0);
+        assert_token(&mut lexer, Token::Op(Operator::Or), 0, 2, 2);
+        assert_token(&mut lexer, Token::Op(Operator::Or), 1, 0, 0);
+        assert_token(&mut lexer, Token::Number(5), 1, 2, 2);
+        assert_token(&mut lexer, Token::Eof, 1, 3, 3);
+    }
+
+    #[test]
+    fn test_newline_at_end() {
+        // Needed to convince myself the column counter logic was okay
+        let input = "t+5\n&&10\n";
+        let mut lexer = Lexer::new(input);
+
+        assert_token(&mut lexer, Token::Variable, 0, 0, 0);
+        assert_token(&mut lexer, Token::Op(Operator::Plus), 0, 1, 1);
+        assert_token(&mut lexer, Token::Number(5), 0, 2, 2);
+        assert_token(&mut lexer, Token::Op(Operator::LogAnd), 1, 0, 1);
+        assert_token(&mut lexer, Token::Number(10), 1, 2, 3);
+        assert_token(&mut lexer, Token::Eof, 2, 0, 0);
     }
 
     #[test]
     fn test_error_tokens() {
         let input = "=";
         let mut lexer = Lexer::new(input);
-        let token = lexer.next();
-        if let Token::Err(LexError::SolitaryEquals) = token.node {
-        } else {
-            panic!("Expected SolitaryEquals, got {:?}", token.node);
-        }
+
+        assert_token(&mut lexer, Token::Err(LexError::SolitaryEquals), 0, 0, 0);
 
         let input = "@";
         let mut lexer = Lexer::new(input);
-        let token = lexer.next();
-        if let Token::Err(LexError::UnexpectedChar('@')) = token.node {
-        } else {
-            panic!("Expected UnexpectedChar(@), got {:?}", token.node);
-        }
+
+        assert_token(
+            &mut lexer,
+            Token::Err(LexError::UnexpectedChar('@')),
+            0,
+            0,
+            0,
+        );
     }
 }
