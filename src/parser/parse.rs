@@ -8,6 +8,7 @@ use crate::parser::Spanned;
 use super::lex::Lexer;
 use super::{ASTNode, NodeId, Operator, ParseError, Token};
 
+/// Wraps a lexer and pulls tokens out to build an AST. Must process a single statement with at least one expression.
 pub struct Parser<'a, 'b> {
     lexer: Lexer<'a>,
     current: Spanned<Token>,

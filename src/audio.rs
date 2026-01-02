@@ -153,9 +153,7 @@ pub fn main(
     static T_WRITE: AtomicI32 = AtomicI32::new(0);
     static BEAT: LazyLock<ArcSwap<parser::Beat>> =
         // TODO: Make this default beat configurable
-        LazyLock::new(|| {
-            ArcSwap::new(Arc::new(parser::Beat::compile("t*(42&t>>10)").unwrap()))
-        });
+        LazyLock::new(|| ArcSwap::new(Arc::new(parser::Beat::default())));
     // See struct declarations
     let sts = StateChangeState::new(event_tx);
     let ts = TimerState::new(&T_WRITE, stream.clone(), t_play);

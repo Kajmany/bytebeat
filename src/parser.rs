@@ -153,8 +153,8 @@ pub enum LexError {
     UnexpectedChar(char),
 }
 
-#[derive(Debug)]
-/// AST of a classic bytebeat function. May be evaluated for 't' into a u8 sample.
+#[derive(Debug, Default)]
+/// AST of a classic bytebeat function. May be evaluated for 't' into a u8 sample. Can be empty, and produce no sound.
 pub struct Beat {
     // Could be a real arena but not practically necessary
     nodes: Vec<ASTNode>,
@@ -162,14 +162,23 @@ pub struct Beat {
 }
 
 impl Beat {
+    /// Attempt to turn a string into an evaluable beat. Empty strings produce silent beats.
     pub fn compile(source: &str) -> Result<Beat, Vec<ParseError>> {
-        let mut nodes = Vec::new();
-        let root = Parser::new(source, &mut nodes).parse()?;
-        Ok(Beat { nodes, root })
+        if source.is_empty() {
+            Ok(Beat::default())
+        } else {
+            let mut nodes = Vec::new();
+            let root = Parser::new(source, &mut nodes).parse()?;
+            Ok(Beat { nodes, root })
+        }
     }
 
     pub fn eval(&self, t: i32) -> u8 {
-        self.eval_node(self.root, t) as u8
+        if self.nodes.is_empty() {
+            0
+        } else {
+            self.eval_node(self.root, t) as u8
+        }
     }
 
     fn eval_node(&self, id: NodeId, t: i32) -> i32 {
