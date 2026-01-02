@@ -1,6 +1,8 @@
 //! Scope widget for visualizing audio samples.
 //!
-//! Uses some state from the audio thread to render a chart.
+//! Uses some state from the audio thread to render a chart. Spoiler: It's just a ring buffer and a
+//! ratatui chart plumbed together.
+//!
 //! FIXME: AI slopped the buffer logic and it's needlessly complicated and probably inefficient
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicI32, Ordering};

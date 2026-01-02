@@ -26,10 +26,10 @@ pub enum Token {
 pub type Column = usize;
 pub type Line = usize;
 
-/// Represents the start and end occurence of a `[Token]` in the source buffer
+/// Represents the start and end occurence of a [`Token`] in the source buffer
 /// Inclusive on both ends, so a span of [0, 0, 0] is a single character at the start.
 ///
-/// No `[Token]` members may span multiple lines.
+/// No [`Token`] members may span multiple lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub line: Line,
@@ -53,7 +53,7 @@ impl fmt::Display for Span {
     }
 }
 
-/// Every token is wrapped in a `[Span]` using this.
+/// Every token is wrapped in a [`Span`] using this.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spanned<T> {
     pub node: T,
@@ -116,7 +116,7 @@ pub enum ASTNode {
     Variable,
     Binary(Operator, NodeId, NodeId),
     Ternary(NodeId, NodeId, NodeId),
-    /// Because `[Beat]` uses these too, we're making invalid state representable.
+    /// Because [`Beat`] uses these too, we're making invalid state representable.
     /// there's logic elsewhere that should prevent creation of a valid beat with these.
     Error(Span),
 }
@@ -143,8 +143,8 @@ pub enum ParseError {
     LexError(LexError, Span),
 }
 
-/// Span is NOT attached because these errors are either in a `[Token::Err]`
-/// or in a `[ParseError::LexError]` which carries the relevant `[Span]`
+/// Span is NOT attached because these errors are either in a [`Token::Err`]`
+/// or in a [`ParseError::LexError`] which carries the relevant [`Span`]
 #[derive(Error, Debug, PartialEq, Clone, Copy)]
 pub enum LexError {
     #[error("Assignment or single = not supported")]

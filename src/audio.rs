@@ -26,9 +26,9 @@ const CHANNELS: usize = 2;
 const STRIDE: usize = size_of::<u8>() * CHANNELS;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-/// Wrapped float that can represent no volume `[Volume::MUTE]` or
-/// normal (not amplified) volume `[Volume::MAX]`.
-/// Same range as `[libspa_sys::SPA_PROP_volume]`
+/// Wrapped float that can represent no volume [`Volume::MUTE`] or
+/// normal (not amplified) volume [`Volume::MAX`].
+/// Same range as [`libspa_sys::SPA_PROP_volume`]
 pub struct Volume(f32);
 
 impl Default for Volume {
@@ -91,11 +91,11 @@ pub enum AudioCommand {
 // None of these structs are necessary. They're hopefully optimized out
 // They're used to make it clearer what state each callback relies upon
 
-/// Used in the `[state_changed]` callback
+/// Used in the [`pipewire::stream::ListenerLocalBuilder::state_changed`] callback
 #[derive(new)]
 struct StateChangeState {
     // i'm so semantically satiated right now
-    /// Used to communicate with the `[crate::event::EventHandler]`
+    /// Used to communicate with the [`crate::event::EventHandler`]
     event_tx: mpsc::Sender<Event>,
 }
 
@@ -115,7 +115,7 @@ struct TimerState {
     t_play: &'static AtomicI32,
 }
 
-/// Passed solely to the `[on_process]` callback
+/// Passed solely to the [`on_process`] callback
 #[derive(new)]
 struct ProcessState {
     /// Used internally to decide what sample to calculate next

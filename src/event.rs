@@ -12,17 +12,17 @@ pub const TICK_FPS: f64 = 30.0;
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    /// Wraps `[CrosstermEvent`] sent from the terminal. Includes resizes, keystrokes, etc
+    /// Wraps [`CrosstermEvent`] sent from the terminal. Includes resizes, keystrokes, etc
     Crossterm(CrosstermEvent),
-    /// Wraps `[AudioEvent`] sent from the audio thread.
+    /// Wraps [`AudioEvent`] sent from the audio thread.
     Audio(AudioEvent),
-    /// Regularly scheduled from the `[EventThread`].
+    /// Regularly scheduled from the [`EventThread`].
     Tick,
-    /// Forwarded from the `[EventThread`]. Occurs only if user asked for file watch input at startup.
+    /// Forwarded from the [`EventThread`]. Occurs only if user asked for file watch input at startup.
     FileWatch(notify::Event),
 }
 
-/// Terminal event handler. This is called commonly by the `[App]` and 'lives' in the TUI thread.
+/// Terminal event handler. This is called commonly by the [`crate::app::App`] and 'lives' in the TUI thread.
 pub struct EventHandler {
     term_sender: mpsc::Sender<Event>,
     term_receiver: mpsc::Receiver<Event>,
@@ -100,7 +100,7 @@ impl EventHandler {
 struct EventThread {
     /// Event term_sender channel.
     term_sender: mpsc::Sender<Event>,
-    /// RX From a `[notify::Watcher]` IFF the user requested file watch beat input during startup.
+    /// RX From a [`notify::Watcher`] IFF the user requested file watch beat input during startup.
     file_watch_receiver: Option<mpsc::Receiver<Result<notify::Event, notify::Error>>>,
 }
 
