@@ -1,6 +1,6 @@
 use crate::{
     App,
-    app::{View, volume},
+    app::{View, input::BeatInput, volume},
     audio::StreamStatus,
 };
 
@@ -36,7 +36,7 @@ const HELP_TEXT: &[&str] = &[
     "  Enter: Compile and play beat",
 ];
 
-impl Widget for &mut App {
+impl<I: BeatInput> Widget for &mut App<I> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let main_block = Block::bordered()
             .title(" bytebeat   ")
@@ -136,7 +136,7 @@ fn draw_modal(area: Rect, buf: &mut Buffer, title: &str, content: impl Widget) {
 }
 
 /// Renders the bottom bar controls based on app state
-fn controls(state: &'_ App) -> Line<'_> {
+fn controls<I: BeatInput>(state: &'_ App<I>) -> Line<'_> {
     // This feels gross, but it works
     let mut parts = Vec::new();
 
@@ -161,7 +161,7 @@ fn controls(state: &'_ App) -> Line<'_> {
 
 /// helper function to create a centered rect using up certain percentage of the available rect `r`
 ///
-/// yoinked from https://ratatui.rs/examples/apps/popup/
+/// yoinked from <https://ratatui.rs/examples/apps/popup/>
 fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     let vertical = Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center);
     let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);

@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 color-eyre = "0.6.5" # TODO: Maybe not really important?
 clap = { version = "4.5.53", features = ["derive"] }
-ratatui = "0.29.0"
+ratatui = { version = "0.29.0", features = ["unstable-widget-ref"] }
 crossterm = "0.29.0"
 
 # Bindings for libspa (used for Pipewire) we have to reference directly sometimes
@@ -27,3 +27,7 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tui-logger = { version = "0.17.4", features = ["crossterm", "tracing-support"] }
 
 derive-new = "0.7.0"
+
+# Used for cross-platform file-watch input mode
+# If I were hardcore I'd use inotify directly, but the inotify(7) 'notes' are terrifying
+notify = "8.2.0"

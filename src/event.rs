@@ -5,10 +5,10 @@ use crossterm::event::{self, Event as CrosstermEvent};
 use std::thread;
 use std::time::Instant;
 use std::{sync::mpsc, time::Duration};
-use tracing::{info, trace};
+use tracing::{error, info, trace};
 
 /// The frequency at which tick events are emitted.
-const TICK_FPS: f64 = 30.0;
+pub const TICK_FPS: f64 = 30.0;
 
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -18,21 +18,27 @@ pub enum Event {
     Audio(AudioEvent),
     /// Regularly scheduled from the `[EventThread`].
     Tick,
+    /// Forwarded from the `[EventThread`]. Occurs only if user asked for file watch input at startup.
+    FileWatch(notify::Event),
 }
 
-/// Terminal event handler.
+/// Terminal event handler. This is called commonly by the `[App]` and 'lives' in the TUI thread.
 pub struct EventHandler {
     term_sender: mpsc::Sender<Event>,
     term_receiver: mpsc::Receiver<Event>,
 
     audio_sender: pipewire::channel::Sender<AudioCommand>,
+    // File watch rx goes straight to the new thread. It'll forward those events back.
 }
 
 impl EventHandler {
     /// Constructs a new instance of [`EventHandler`] and spawns a new thread to handle events.
-    pub fn new(audio_sender: pipewire::channel::Sender<AudioCommand>) -> Self {
+    pub fn new(
+        audio_sender: pipewire::channel::Sender<AudioCommand>,
+        file_watch_receiver: Option<mpsc::Receiver<Result<notify::Event, notify::Error>>>,
+    ) -> Self {
         let (term_sender, term_receiver) = mpsc::channel();
-        let actor = EventThread::new(term_sender.clone());
+        let actor = EventThread::new(term_sender.clone(), file_watch_receiver);
         thread::spawn(|| actor.run());
         Self {
             term_sender,
@@ -90,16 +96,24 @@ impl EventHandler {
     }
 }
 
-/// A thread that handles reading crossterm events and emitting tick events on a regular schedule.
+/// A thread that forwards crossterm and file watch events to the main thread. Also emits ticks.
 struct EventThread {
     /// Event term_sender channel.
     term_sender: mpsc::Sender<Event>,
+    /// RX From a `[notify::Watcher]` IFF the user requested file watch beat input during startup.
+    file_watch_receiver: Option<mpsc::Receiver<Result<notify::Event, notify::Error>>>,
 }
 
 impl EventThread {
     /// Constructs a new instance of [`EventThread`].
-    fn new(term_sender: mpsc::Sender<Event>) -> Self {
-        Self { term_sender }
+    fn new(
+        term_sender: mpsc::Sender<Event>,
+        file_watch_receiver: Option<mpsc::Receiver<Result<notify::Event, notify::Error>>>,
+    ) -> Self {
+        Self {
+            term_sender,
+            file_watch_receiver,
+        }
     }
 
     /// Runs the event thread.
@@ -121,6 +135,21 @@ impl EventThread {
                 let event = event::read().wrap_err("failed to read crossterm event")?;
                 trace!("event thread recieved crossterm event: {:?}", event);
                 self.send(Event::Crossterm(event));
+            }
+            // we'll have a file_watch only if the user wanted file-watching beat input
+            if let Some(file_watch_rx) = &self.file_watch_receiver {
+                match file_watch_rx.try_recv() {
+                    Ok(Ok(event)) => {
+                        trace!("event thread received file watch event: {:?}", event);
+                        self.send(Event::FileWatch(event));
+                    }
+                    Ok(Err(e)) => error!("file watch error: {:?}", e),
+                    Err(mpsc::TryRecvError::Empty) => {} // Cool
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        // Not cool TODO: Under what circumstances could this happen?
+                        panic!("file watch channel disconnected")
+                    }
+                }
             }
         }
     }

@@ -1,18 +1,50 @@
-//! Input widget for editing (and submitting) a bytebeat code
+//! Contains 'inputs' which hold potential beats as strings.
 //!
-//! Probably doesn't handled grapheme clusters prettily, but theoretically
-//! unicode-respecting if 'add' is used carefully.
+//! The stdio-interactive input and file watcher ''input'' are both barbarically forced to implement
+//! the same trait [`BeatInput`].
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Paragraph, Widget},
+    widgets::{Block, BorderType, Paragraph, Widget, WidgetRef},
 };
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{app::ui, parser::ParseError};
+
+/// Private trait for error storage, used to provide blanket implementations.
+// TODO: More common error display functionality could be packed in here
+trait ErrorStore {
+    fn errors_mut(&mut self) -> &mut Vec<ParseError>;
+}
+
+#[expect(private_bounds)]
+pub trait BeatInput: WidgetRef + ErrorStore {
+    fn new() -> Self;
+    /// Ignored on file watch input.
+    fn from_str(s: &str) -> Self;
+    /// Only used for interactive input.
+    fn handle_key_event(&mut self, event: KeyEvent);
+    /// Only used for file watch input
+    fn handle_watch_event(&mut self, event: notify::Event);
+    fn get_buffer(&self) -> String;
+    fn height_hint(&self) -> u16;
+    /// Just used for visuals.
+    fn tick(&mut self);
+
+    fn clear_errors(&mut self) {
+        self.errors_mut().clear();
+    }
+
+    fn set_errors(&mut self, errors: Vec<ParseError>) {
+        *self.errors_mut() = errors;
+    }
+}
+
 /// Extremely simple single-buffer utf-8 input widget for small texts.
+///
+/// Performs poorly with grapheme clusters (emoji, scripts, etc) but won't crash, or anything.
 #[derive(Default, Debug)]
 pub struct LineInput {
     // 0-Indexed. cursor == len represents append
@@ -120,26 +152,74 @@ impl Widget for &LineInput {
     }
 }
 
-/// Wraps `[LineInput]` for top-level display. Responsible for displaying errors, too.
+/// Renders a list of parse errors into the given area.
+/// Displays up to `MAX_ERRORS_SHOWN` errors, with a summary line if there are more.
+fn render_errors(
+    errors: &[ParseError],
+    area: ratatui::prelude::Rect,
+    buf: &mut ratatui::prelude::Buffer,
+) {
+    if errors.is_empty() {
+        return;
+    }
+
+    let mut error_text: Vec<Line> = errors
+        .iter()
+        .take(ui::MAX_ERRORS_SHOWN)
+        .map(|e| {
+            Line::from(vec![Span::styled(
+                format!("Error: {}", e),
+                Style::default().fg(Color::Red),
+            )])
+        })
+        .collect();
+
+    if errors.len() > ui::MAX_ERRORS_SHOWN {
+        error_text.push(Line::from(vec![Span::styled(
+            format!("...and {} more", errors.len() - ui::MAX_ERRORS_SHOWN),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )]));
+    }
+
+    Paragraph::new(error_text).render(area, buf);
+}
+
+/// Input widget for editing (and submitting) a bytebeat code and displaying errors.
+/// Most functionality is that of [`LineInput`]
 #[derive(Debug, Default)]
-pub struct BeatInput {
+pub struct InteractiveInput {
     input: LineInput,
     errors: Vec<ParseError>,
 }
 
-impl BeatInput {
-    pub fn new() -> Self {
+impl ErrorStore for InteractiveInput {
+    fn errors_mut(&mut self) -> &mut Vec<ParseError> {
+        &mut self.errors
+    }
+}
+
+impl BeatInput for InteractiveInput {
+    fn new() -> Self {
         Self::default()
     }
 
-    pub fn from_str(s: &str) -> Self {
+    fn from_str(s: &str) -> Self {
         Self {
             input: LineInput::from_str(s),
             errors: Vec::new(),
         }
     }
 
-    pub fn handle_key_event(&mut self, event: KeyEvent) {
+    fn handle_watch_event(&mut self, _event: notify::Event) {
+        // No-op.
+    }
+
+    fn tick(&mut self) {
+        // No-op.
+        // TODO: flash cursor? that'd be neat.
+    }
+
+    fn handle_key_event(&mut self, event: KeyEvent) {
         match event.code {
             KeyCode::Backspace => {
                 self.input.remove();
@@ -167,29 +247,18 @@ impl BeatInput {
         }
     }
 
-    pub fn set_errors(&mut self, errors: Vec<ParseError>) {
-        self.errors = errors;
-    }
-
-    pub fn clear_errors(&mut self) {
-        self.errors.clear();
-    }
-
-    pub fn get_buffer(&self) -> String {
+    fn get_buffer(&self) -> String {
         self.input.get_buffer()
     }
 
-    pub fn height_hint(&self) -> u16 {
+    fn height_hint(&self) -> u16 {
         // 2 for the block, 1 for the LineInput, up to n errors + 1 'n more...'
         (2 + 1 + self.errors.len().min(ui::MAX_ERRORS_SHOWN + 1)) as u16
     }
 }
 
-impl Widget for &BeatInput {
-    fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer)
-    where
-        Self: Sized,
-    {
+impl WidgetRef for InteractiveInput {
+    fn render_ref(&self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
         let block = Block::bordered()
             .title(" Input ")
             .border_type(BorderType::Rounded);
@@ -204,27 +273,89 @@ impl Widget for &BeatInput {
 
         self.input.render(chunks[0], buf);
 
-        if !self.errors.is_empty() {
-            let mut error_text: Vec<Line> = self
-                .errors
-                .iter()
-                .take(ui::MAX_ERRORS_SHOWN)
-                .map(|e| {
-                    Line::from(vec![Span::styled(
-                        format!("Error: {}", e),
-                        Style::default().fg(Color::Red),
-                    )])
-                })
-                .collect();
+        render_errors(&self.errors, chunks[1], buf);
+    }
+}
 
-            if self.errors.len() > ui::MAX_ERRORS_SHOWN {
-                error_text.push(Line::from(vec![Span::styled(
-                    format!("...and {} more", self.errors.len() - ui::MAX_ERRORS_SHOWN),
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                )]));
-            }
+/// Reads a file when given certain types of watch event. Does not visually display buffer, but does display errors.
+///
+/// Relies on a [`notify::Watcher`] it isn't exposed to directly.
+//  TODO: Should the file I/O be hoisted up into App?
+#[derive(Default, Debug)]
+pub struct FileWatchInput {
+    blinken: bool,
+    blinken_timer: u16,
+    buffer: String,
+    errors: Vec<ParseError>,
+}
 
-            Paragraph::new(error_text).render(chunks[1], buf);
+impl ErrorStore for FileWatchInput {
+    fn errors_mut(&mut self) -> &mut Vec<ParseError> {
+        &mut self.errors
+    }
+}
+
+impl BeatInput for FileWatchInput {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn from_str(s: &str) -> Self {
+        Self {
+            blinken: false,
+            blinken_timer: 0,
+            buffer: s.to_string(),
+            errors: Vec::new(),
         }
+    }
+
+    fn handle_key_event(&mut self, _event: KeyEvent) {
+        // No-op.
+    }
+
+    fn tick(&mut self) {
+        // It's entirely coincidence that this blinkenlight isn't a total lie:
+        // the ticks come from the same event loop that poll the watcher
+        // but we're supposed to panic if something in the loop breaks, so this
+        // probably still isn't technically useful. It looks cool though.
+        self.blinken_timer += 1;
+        if self.blinken_timer >= crate::event::TICK_FPS as u16 {
+            self.blinken = !self.blinken;
+            self.blinken_timer = 0;
+        }
+    }
+
+    fn handle_watch_event(&mut self, event: notify::Event) {
+        match event.kind {
+            // TODO: FIXME: This should be more robust. Consider out of order events where we try to read a deleted file
+            // or we try to read a folder, etc.
+            notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
+                self.buffer = std::fs::read_to_string(event.paths.first().unwrap()).unwrap();
+            }
+            _ => {}
+        }
+    }
+
+    fn get_buffer(&self) -> String {
+        self.buffer.clone()
+    }
+
+    fn height_hint(&self) -> u16 {
+        // 2 for the block, up to n errors + 1 'n more...' (no buffer displayed)
+        (2 + self.errors.len().min(ui::MAX_ERRORS_SHOWN + 1)) as u16
+    }
+}
+
+impl WidgetRef for FileWatchInput {
+    fn render_ref(&self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
+        let indicator = if self.blinken { "◉" } else { "○" };
+        let block = Block::bordered()
+            .title(format!(" Watching {} ", indicator))
+            .border_type(BorderType::Rounded);
+
+        let inner_area = block.inner(area);
+        block.render(area, buf);
+
+        render_errors(&self.errors, inner_area, buf);
     }
 }

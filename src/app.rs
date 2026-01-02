@@ -11,7 +11,7 @@ use crate::{
     event::{Event, EventHandler},
 };
 
-mod input;
+pub mod input; // TODO: Not pretty, has to be pub so we can make it in main :(
 mod scope;
 mod ui;
 mod volume;
@@ -25,26 +25,27 @@ pub enum View {
     Library,
 }
 
-pub struct App {
+pub struct App<I: BeatInput> {
     running: bool,
     events: EventHandler,
-    // As we wish it.
+    /// As we wish it.
     paused: bool,
-    // May be streaming or paused, but also other things too
+    /// May be streaming or paused, but also other things too
     audio_state: StreamStatus,
     /// No boost, only decrease.
     audio_vol: Volume,
     // TODO: undo/redo system shouldn't be that hard. later.
-    beat_input: BeatInput,
+    beat_input: I,
     scope: scope::Scope,
     view: View,
 }
 
-impl App {
+impl<I: BeatInput> App<I> {
     pub fn new(
         events: EventHandler,
         consumer: rtrb::Consumer<u8>,
         t_play: &'static AtomicI32,
+        beat_input: I,
     ) -> Self {
         Self {
             running: true,
@@ -52,8 +53,7 @@ impl App {
             paused: true,
             audio_state: StreamStatus::Unconnected,
             audio_vol: Volume::default(),
-            // TODO: Not a pretty way to do defaults
-            beat_input: BeatInput::from_str("t*(42&t>>10)"),
+            beat_input,
             scope: scope::Scope::new(consumer, t_play),
             view: View::Main,
         }
@@ -81,6 +81,7 @@ impl App {
                 self.audio_state = event;
             }
             Event::Tick => self.tick(),
+            Event::FileWatch(event) => self.beat_input.handle_watch_event(event),
         }
         Ok(())
     }
@@ -89,6 +90,8 @@ impl App {
     fn tick(&mut self) {
         // Update the scope with any new samples
         self.scope.update();
+        // Just does visuals
+        self.beat_input.tick();
     }
 
     fn handle_key_event(&mut self, event: KeyEvent) {
@@ -104,6 +107,7 @@ impl App {
             KeyCode::Down => self.decr_volume(),
 
             // View-specific keys
+            // FIXME: pulling the buffer doesn't play well with file reading, we need async 'request' with messages
             _ => match self.view {
                 View::Main => match event.code {
                     KeyCode::Enter => self.try_beat(),
