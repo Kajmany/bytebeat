@@ -11,7 +11,7 @@ use tui_logger::{LevelFilter, TuiLoggerFile};
 use crate::{
     app::{
         App,
-        input::{BeatInput, FileWatchInput, InteractiveInput},
+        input::{FileWatchInput, InteractiveInput},
     },
     audio::AudioCommand,
     event::EventHandler,
@@ -108,13 +108,7 @@ fn main() -> Result<()> {
     let terminal = ratatui::init();
     // We need to split here because App is generic over these possible input widgets TODO: Do this inside App?
     let result = if cli.interactive {
-        App::new(
-            events,
-            consumer,
-            &T_PLAY,
-            InteractiveInput::from_str("t*(42&t>>10)"),
-        )
-        .run(terminal)
+        App::new(events, consumer, &T_PLAY, InteractiveInput::default()).run(terminal)
     } else {
         App::new(events, consumer, &T_PLAY, FileWatchInput::default()).run(terminal)
     };

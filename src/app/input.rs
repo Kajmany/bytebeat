@@ -21,9 +21,6 @@ trait ErrorStore {
 
 #[expect(private_bounds)]
 pub trait BeatInput: WidgetRef + ErrorStore {
-    fn new() -> Self;
-    /// Ignored on file watch input.
-    fn from_str(s: &str) -> Self;
     /// Only used for interactive input.
     fn handle_key_event(&mut self, event: KeyEvent);
     /// Only used for file watch input
@@ -199,17 +196,6 @@ impl ErrorStore for InteractiveInput {
 }
 
 impl BeatInput for InteractiveInput {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn from_str(s: &str) -> Self {
-        Self {
-            input: LineInput::from_str(s),
-            errors: Vec::new(),
-        }
-    }
-
     fn handle_watch_event(&mut self, _event: notify::Event) {
         // No-op.
     }
@@ -296,19 +282,6 @@ impl ErrorStore for FileWatchInput {
 }
 
 impl BeatInput for FileWatchInput {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn from_str(s: &str) -> Self {
-        Self {
-            blinken: false,
-            blinken_timer: 0,
-            buffer: s.to_string(),
-            errors: Vec::new(),
-        }
-    }
-
     fn handle_key_event(&mut self, _event: KeyEvent) {
         // No-op.
     }
