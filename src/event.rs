@@ -1,4 +1,4 @@
-use crate::audio::{AudioCommand, AudioEvent, Volume};
+use crate::audio::{self, AudioCommand, AudioEvent, Volume};
 use crate::parser::{self};
 use color_eyre::eyre::WrapErr;
 use crossterm::event::{self, Event as CrosstermEvent};
@@ -27,14 +27,14 @@ pub struct EventHandler {
     term_sender: mpsc::Sender<Event>,
     term_receiver: mpsc::Receiver<Event>,
 
-    audio_sender: pipewire::channel::Sender<AudioCommand>,
+    audio_sender: audio::CommandSender,
     // File watch rx goes straight to the new thread. It'll forward those events back.
 }
 
 impl EventHandler {
     /// Constructs a new instance of [`EventHandler`] and spawns a new thread to handle events.
     pub fn new(
-        audio_sender: pipewire::channel::Sender<AudioCommand>,
+        audio_sender: audio::CommandSender,
         file_watch_receiver: Option<mpsc::Receiver<Result<notify::Event, notify::Error>>>,
     ) -> Self {
         let (term_sender, term_receiver) = mpsc::channel();

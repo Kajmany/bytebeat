@@ -13,7 +13,6 @@ use crate::{
         App,
         input::{FileWatchInput, InteractiveInput},
     },
-    audio::AudioCommand,
     event::EventHandler,
 };
 
@@ -79,7 +78,7 @@ fn main() -> Result<()> {
     // Somewhat ugly piping between threads done here
 
     // So commands to change stream can flow events -> audio
-    let (command_tx, command_rx) = pipewire::channel::channel::<AudioCommand>();
+    let (command_tx, command_rx) = audio::command_channel();
 
     // For audio visualization widget. Audio thread produces, App consumes
     // 64000 samples @ 8kHz = 8 seconds of buffer (and 62.5KiB)
