@@ -7,8 +7,8 @@ use crate::{
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
-    style::{Modifier, Style},
-    text::Line,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
@@ -17,8 +17,11 @@ use ratatui::{
 /// Not everything wrong becomes a discrete error, it's actually hard to rack up this many
 pub const MAX_ERRORS_SHOWN: usize = 3;
 
+/// Scientists estimate decades until average TUI dev rediscovers i18n
 const HELP_TEXT: &[&str] = &[
     "Controls:",
+    "  Esc: Close Help or return to Main",
+    "    - (May also repeat key to close Help/View)",
     "  F1: Help",
     "  F2: Log",
     "  F3: Quit",
@@ -26,9 +29,8 @@ const HELP_TEXT: &[&str] = &[
     "  F5: Library",
     "  F6: About",
     "  Up/Down: Volume",
-    "  Esc: Back to Main",
     "",
-    "Input Controls:",
+    "Interactive Input:",
     "  Type to insert characters",
     "  Backspace: Remove character before cursor",
     "  Left/Right: Move cursor",
@@ -44,10 +46,17 @@ impl<I: BeatInput> Widget for &mut App<I> {
             .border_type(BorderType::Rounded)
             .title_bottom(controls(self));
 
-        let main_interior = Layout::default()
-            .direction(Direction::Vertical)
-            // One big widget area, and a little bottom bar
-            .constraints(vec![
+        // BigLog and Library views replace the scope and log areas
+        let display_constraints = match self.view {
+            View::BigLog | View::Library => vec![
+                // BigLog | Library
+                Constraint::Percentage(95),
+                // Input
+                Constraint::Length(self.beat_input.height_hint()),
+                // Status bar
+                Constraint::Length(3),
+            ],
+            _ => vec![
                 // Scope
                 Constraint::Percentage(80),
                 // Logs
@@ -56,7 +65,12 @@ impl<I: BeatInput> Widget for &mut App<I> {
                 Constraint::Length(self.beat_input.height_hint()),
                 // Status bar
                 Constraint::Length(3),
-            ])
+            ],
+        };
+
+        let main_interior = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(display_constraints)
             .split(main_block.inner(area));
 
         let status_block = Block::new()
@@ -73,22 +87,42 @@ impl<I: BeatInput> Widget for &mut App<I> {
 
         main_block.render(area, buf);
 
-        // Waveform visualization
-        self.scope.render(main_interior[0], buf);
+        // Render view-dependent content in the top area(s)
+        match self.view {
+            View::BigLog => {
+                Paragraph::new("Placeholder for Big Log")
+                    .block(Block::bordered().title(" Big Log "))
+                    .render(main_interior[0], buf);
+            }
+            View::Library => {
+                Paragraph::new("Placeholder for Library")
+                    .block(Block::bordered().title(" Library "))
+                    .render(main_interior[0], buf);
+            }
+            View::Main => {
+                self.scope.render(main_interior[0], buf);
 
-        tui_logger::TuiLoggerWidget::default()
-            .block(Block::bordered().title(" Log "))
-            .output_separator('|')
-            .output_timestamp(Some("%H:%M:%S".to_string()))
-            .output_level(Some(tui_logger::TuiLoggerLevelOutput::Long))
-            .output_target(false)
-            .output_file(false)
-            .output_line(false)
-            .render(main_interior[1], buf);
+                tui_logger::TuiLoggerWidget::default()
+                    .block(Block::bordered().title(" Log "))
+                    .output_separator('|')
+                    .output_timestamp(Some("%H:%M:%S".to_string()))
+                    .output_level(Some(tui_logger::TuiLoggerLevelOutput::Long))
+                    .output_target(false)
+                    .output_file(false)
+                    .output_line(false)
+                    .render(main_interior[1], buf);
+            }
+        }
 
-        self.beat_input.render(main_interior[2], buf);
-        // Status bar text must be rendered before status bar
-        let status_area = status_block.inner(main_interior[3]);
+        // Input and status bar indices shift based on view layout
+        let (input_idx, status_idx) = match self.view {
+            View::BigLog | View::Library => (1, 2),
+            View::Main => (2, 3),
+        };
+
+        self.beat_input.render(main_interior[input_idx], buf);
+
+        let status_area = status_block.inner(main_interior[status_idx]);
         let status_layout = Layout::horizontal([
             Constraint::Fill(1),
             Constraint::Length(30),
@@ -102,20 +136,12 @@ impl<I: BeatInput> Widget for &mut App<I> {
             .render(status_layout[0], buf);
 
         volume::render(status_layout[1], buf, &self.audio_vol);
-        status_block.render(main_interior[3], buf);
+        status_block.render(main_interior[status_idx], buf);
 
-        if self.view != View::Main {
-            let (title, content) = match self.view {
-                // TODO: Too big & plain. looks silly
-                View::Help => (
-                    "Help",
-                    Paragraph::new(HELP_TEXT.iter().map(|&s| Line::from(s)).collect::<Vec<_>>()),
-                ),
-                View::Log => ("Big Log", Paragraph::new("Placeholder for Big Log")),
-                View::Library => ("Library", Paragraph::new("Placeholder for Library")),
-                View::Main => unreachable!(),
-            };
-            draw_modal(area, buf, title, content);
+        if self.show_help {
+            let content =
+                Paragraph::new(HELP_TEXT.iter().map(|&s| Line::from(s)).collect::<Vec<_>>());
+            draw_modal(area, buf, "Help", content);
         }
     }
 }
@@ -137,26 +163,65 @@ fn draw_modal(area: Rect, buf: &mut Buffer, title: &str, content: impl Widget) {
 
 /// Renders the bottom bar controls based on app state
 fn controls<I: BeatInput>(state: &'_ App<I>) -> Line<'_> {
-    // This feels gross, but it works
-    let mut parts = Vec::new();
+    // Messy. ensures forward and back padding
+    // Active is highlighted, maybe it should be other way around?
+    let sep = Span::raw(" | ");
+    let active = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
 
-    if state.view != View::Main {
-        parts.push(" <Esc>: Main | <F1>: Help");
-    } else {
-        parts.push(" <F1>: Help");
+    let mut spans = vec![Span::raw(" ")]; // Leading padding
+
+    if state.view != View::Main || state.show_help {
+        spans.push(Span::raw("<Esc>: Back"));
+        spans.push(sep.clone());
     }
 
-    parts.push("<F2>: Log");
-    parts.push("<F3>: Quit");
+    let help_span = Span::styled(
+        "<F1>: Help",
+        if state.show_help {
+            active
+        } else {
+            Style::default()
+        },
+    );
+    spans.push(help_span);
+    spans.push(sep.clone());
 
-    parts.push(if state.paused {
+    let log_span = Span::styled(
+        "<F2>: Log",
+        if state.view == View::BigLog {
+            active
+        } else {
+            Style::default()
+        },
+    );
+    spans.push(log_span);
+    spans.push(sep.clone());
+
+    spans.push(Span::raw("<F3>: Quit"));
+    spans.push(sep.clone());
+
+    let play_text = if state.paused {
         "<F4>: Play"
     } else {
         "<F4>: Pause"
-    });
+    };
+    spans.push(Span::raw(play_text));
+    spans.push(sep.clone());
 
-    parts.push("<F5>: Library ");
-    Line::from(parts.join(" | ")).centered()
+    let lib_span = Span::styled(
+        "<F5>: Library",
+        if state.view == View::Library {
+            active
+        } else {
+            Style::default()
+        },
+    );
+    spans.push(lib_span);
+    spans.push(Span::raw(" ")); // Trailing padding
+
+    Line::from(spans).centered()
 }
 
 /// helper function to create a centered rect using up certain percentage of the available rect `r`

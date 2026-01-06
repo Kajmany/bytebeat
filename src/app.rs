@@ -20,8 +20,7 @@ mod volume;
 pub enum View {
     #[default]
     Main,
-    Help,
-    Log,
+    BigLog,
     Library,
 }
 
@@ -38,6 +37,8 @@ pub struct App<I: BeatInput> {
     beat_input: I,
     scope: scope::Scope,
     view: View,
+    /// We can draw the help modal with (over) any view
+    show_help: bool,
 }
 
 impl<I: BeatInput> App<I> {
@@ -56,6 +57,7 @@ impl<I: BeatInput> App<I> {
             beat_input,
             scope: scope::Scope::new(consumer, t_play),
             view: View::Main,
+            show_help: false,
         }
     }
 
@@ -97,12 +99,18 @@ impl<I: BeatInput> App<I> {
     fn handle_key_event(&mut self, event: KeyEvent) {
         // Global keys
         match event.code {
-            KeyCode::F(1) => self.view = View::Help,
-            KeyCode::F(2) => self.view = View::Log,
+            KeyCode::F(1) => self.show_help = !self.show_help,
+            KeyCode::F(2) => self.toggle_view(View::BigLog),
             KeyCode::F(3) => self.quit(),
             KeyCode::F(4) => self.toggle_playback(),
-            KeyCode::F(5) => self.view = View::Library,
-            KeyCode::Esc => self.view = View::Main,
+            KeyCode::F(5) => self.toggle_view(View::Library),
+            KeyCode::Esc => {
+                if self.show_help {
+                    self.show_help = false;
+                } else {
+                    self.view = View::Main;
+                }
+            }
             KeyCode::Up => self.incr_volume(),
             KeyCode::Down => self.decr_volume(),
 
@@ -117,9 +125,18 @@ impl<I: BeatInput> App<I> {
                     _ => {}
                 },
                 _ => {
-                    // Swallow other keys in modals for now
+                    // Swallow other keys in non-main views for now
                 }
             },
+        }
+    }
+
+    /// Go to the target view from main, Or back to main if we're there
+    fn toggle_view(&mut self, target: View) {
+        if self.view == target {
+            self.view = View::Main;
+        } else {
+            self.view = target;
         }
     }
 
