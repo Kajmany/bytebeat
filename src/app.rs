@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicI32;
 use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::DefaultTerminal;
-use tracing::{info, trace};
+use tracing::{error, info, trace};
 
 use crate::{
     app::input::BeatInput,
@@ -15,6 +15,29 @@ pub mod input; // TODO: Not pretty, has to be pub so we can make it in main :(
 mod scope;
 mod ui;
 
+#[derive(Debug, Clone)]
+/// Returned from component-specific update methods or methods of [`App`]
+/// only these events mutate state directly.
+pub enum AppEvent {
+    /// Input OR Library wants you to play this sick beat
+    InputReady(String),
+    /// Library wants you to play this AND over-write the Input
+    BeatOverwrite(String),
+    // All these were formerly immediate & hardcoded in handle_key_event
+    VolumeUp,
+    VolumeDown,
+    Quit,
+    TogglePlay,
+    /// Changes to this specific view
+    ChangeView(View),
+    /// Esc action, will close help or return to main view
+    ViewBack,
+    ToggleHelp,
+}
+
+/// Used to decide where to route events and what to render
+///
+/// Help modal is elsewhere because it's not mutually exclusive
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     #[default]
@@ -69,73 +92,104 @@ impl<I: BeatInput> App<I> {
     }
 
     fn update(&mut self) -> Result<()> {
-        match self.events.next()? {
+        let response_event: Option<AppEvent> = match self.events.next()? {
+            Event::App(event) => match event {
+                AppEvent::InputReady(code) => {
+                    self.try_beat(&code);
+                    None
+                }
+                AppEvent::BeatOverwrite(code) => {
+                    let _ = self.beat_input.set_buffer(code.clone());
+                    let _ = self.events.new_beat(&code).map_err(|e| {
+                        error!(
+                            "library sent a hardcoded beat that had an error (embarrassing): {e:?}"
+                        )
+                    });
+                    None
+                }
+                AppEvent::VolumeUp => {
+                    self.incr_volume();
+                    None
+                }
+                AppEvent::VolumeDown => {
+                    self.decr_volume();
+                    None
+                }
+                AppEvent::Quit => {
+                    self.quit();
+                    None
+                }
+                AppEvent::TogglePlay => {
+                    self.toggle_playback();
+                    None
+                }
+                AppEvent::ChangeView(view) => {
+                    self.view = view;
+                    None
+                }
+                AppEvent::ToggleHelp => {
+                    self.show_help = !self.show_help;
+                    None
+                }
+                AppEvent::ViewBack => {
+                    if self.show_help {
+                        self.show_help = false;
+                    } else {
+                        self.view = View::Main;
+                    }
+                    None
+                }
+            },
             Event::Crossterm(event) => match event {
                 crossterm::event::Event::Key(event) if event.kind == KeyEventKind::Press => {
                     trace!("app handling crossterm event: {:?}", event);
                     self.handle_key_event(event)
                 }
-                _ => {}
+                _ => None,
             },
             Event::Audio(AudioEvent::StateChange(event)) => {
                 info!("app recieved audio state change: {:?}", event);
                 self.audio_state = event;
+                None
             }
-            Event::Tick => self.tick(),
-            Event::FileWatch(event) => self.beat_input.handle_watch_event(event),
+            Event::Tick => {
+                // Must run even when not shown to keep emptying rtrb
+                self.scope.update();
+                // For visuals in component
+                self.beat_input.handle_event(&Event::Tick)
+            }
+            Event::FileWatch(event) => self.beat_input.handle_event(&Event::FileWatch(event)),
+        };
+
+        if let Some(event) = response_event {
+            self.events.enqueue_app_event(event);
         }
         Ok(())
     }
 
-    /// Fires on recieving messages from the event thread
-    fn tick(&mut self) {
-        // Update the scope with any new samples
-        self.scope.update();
-        // Just does visuals
-        self.beat_input.tick();
-    }
-
-    fn handle_key_event(&mut self, event: KeyEvent) {
+    fn handle_key_event(&mut self, event: KeyEvent) -> Option<AppEvent> {
         // Global keys
         match event.code {
-            KeyCode::F(1) => self.show_help = !self.show_help,
-            KeyCode::F(2) => self.toggle_view(View::BigLog),
-            KeyCode::F(3) => self.quit(),
-            KeyCode::F(4) => self.toggle_playback(),
-            KeyCode::F(5) => self.toggle_view(View::Library),
-            KeyCode::Esc => {
-                if self.show_help {
-                    self.show_help = false;
-                } else {
-                    self.view = View::Main;
-                }
-            }
-            KeyCode::Up => self.incr_volume(),
-            KeyCode::Down => self.decr_volume(),
+            KeyCode::F(1) => Some(AppEvent::ToggleHelp),
+            KeyCode::F(2) => Some(AppEvent::ChangeView(View::BigLog)),
+            KeyCode::F(3) => Some(AppEvent::Quit),
+            KeyCode::F(4) => Some(AppEvent::TogglePlay),
+            KeyCode::F(5) => Some(AppEvent::ChangeView(View::Library)),
+            KeyCode::Esc => Some(AppEvent::ViewBack),
+            KeyCode::Up => Some(AppEvent::VolumeUp),
+            KeyCode::Down => Some(AppEvent::VolumeDown),
 
-            // View-specific keys
-            // FIXME: pulling the buffer doesn't play well with file reading, we need async 'request' with messages
+            // Pass-through to components depending on view
             _ => match self.view {
-                View::Main => match event.code {
-                    KeyCode::Enter => self.try_beat(),
-                    KeyCode::Backspace | KeyCode::Char(_) | KeyCode::Left | KeyCode::Right => {
-                        self.beat_input.handle_key_event(event);
-                    }
-                    _ => {}
-                },
-                _ => {
-                    // Swallow other keys in non-main views for now
-                }
+                View::Main => self
+                    .beat_input
+                    // Oh wow this is ugly
+                    .handle_event(&Event::Crossterm(crossterm::event::Event::Key(event))),
+                View::Library => self
+                    .library
+                    .handle_event(&Event::Crossterm(crossterm::event::Event::Key(event))),
+                View::BigLog => None,
             },
-        }
-    }
-
-    /// Go to the target view from main, Or back to main if we're there
-    fn toggle_view(&mut self, target: View) {
-        if self.view == target {
-            self.view = View::Main;
-        } else {
-            self.view = target;
         }
     }
 
@@ -173,8 +227,8 @@ impl<I: BeatInput> App<I> {
     }
 
     /// Try-compile and play new are one operation from the user's perspective
-    fn try_beat(&mut self) {
-        match self.events.new_beat(&self.beat_input.get_buffer()) {
+    fn try_beat(&mut self, code: &str) {
+        match self.events.new_beat(code) {
             Ok(_) => self.beat_input.clear_errors(),
             Err(errs) => self.beat_input.set_errors(errs),
         }

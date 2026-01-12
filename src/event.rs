@@ -1,3 +1,4 @@
+use crate::app::AppEvent;
 use crate::audio::{self, AudioCommand, AudioEvent, Volume};
 use crate::parser::{self};
 use color_eyre::eyre::WrapErr;
@@ -12,6 +13,8 @@ pub const TICK_FPS: f64 = 30.0;
 
 #[derive(Clone, Debug)]
 pub enum Event {
+    /// Components inside [`crate::app::App`] may return this when they want global state changes
+    App(AppEvent),
     /// Wraps [`CrosstermEvent`] sent from the terminal. Includes resizes, keystrokes, etc
     Crossterm(CrosstermEvent),
     /// Wraps [`AudioEvent`] sent from the audio thread.
@@ -93,6 +96,10 @@ impl EventHandler {
         trace!("compilation complete; event handler sending new beat command");
         let _ = self.audio_sender.send(AudioCommand::NewBeat(beat));
         Ok(())
+    }
+
+    pub fn enqueue_app_event(&self, event: AppEvent) {
+        let _ = self.term_sender.send(Event::App(event));
     }
 }
 

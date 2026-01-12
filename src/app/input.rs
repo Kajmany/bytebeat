@@ -9,9 +9,13 @@ use ratatui::{
     widgets::{Block, BorderType, Paragraph, Widget, WidgetRef},
 };
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::{app::ui, parser::ParseError};
+use crate::{
+    app::{AppEvent, ui},
+    event::Event,
+    parser::ParseError,
+};
 
 /// Private trait for error storage, used to provide blanket implementations.
 // TODO: More common error display functionality could be packed in here
@@ -21,14 +25,9 @@ trait ErrorStore {
 
 #[expect(private_bounds)]
 pub trait BeatInput: WidgetRef + ErrorStore {
-    /// Only used for interactive input.
-    fn handle_key_event(&mut self, event: KeyEvent);
-    /// Only used for file watch input
-    fn handle_watch_event(&mut self, event: notify::Event);
-    fn get_buffer(&self) -> String;
+    fn handle_event(&mut self, event: &Event) -> Option<AppEvent>;
+    fn set_buffer(&mut self, buf: String) -> color_eyre::Result<()>;
     fn height_hint(&self) -> u16;
-    /// Just used for visuals.
-    fn tick(&mut self);
 
     fn clear_errors(&mut self) {
         self.errors_mut().clear();
@@ -46,7 +45,7 @@ pub trait BeatInput: WidgetRef + ErrorStore {
 pub struct LineInput {
     // 0-Indexed. cursor == len represents append
     cursor: usize,
-    buf: Vec<char>,
+    pub buf: Vec<char>,
 }
 
 impl LineInput {
@@ -196,45 +195,45 @@ impl ErrorStore for InteractiveInput {
 }
 
 impl BeatInput for InteractiveInput {
-    fn handle_watch_event(&mut self, _event: notify::Event) {
-        // No-op.
-    }
-
-    fn tick(&mut self) {
-        // No-op.
-        // TODO: flash cursor? that'd be neat.
-    }
-
-    fn handle_key_event(&mut self, event: KeyEvent) {
-        match event.code {
-            KeyCode::Backspace => {
-                self.input.remove();
-            }
-            KeyCode::Char(c) => {
-                if !c.is_control() {
-                    self.input.add(c);
+    fn handle_event(&mut self, event: &Event) -> Option<AppEvent> {
+        match event {
+            Event::Crossterm(crossterm::event::Event::Key(key)) => {
+                match key.code {
+                    KeyCode::Enter => return Some(AppEvent::InputReady(self.input.get_buffer())),
+                    KeyCode::Backspace => {
+                        self.input.remove();
+                    }
+                    KeyCode::Char(c) => {
+                        if !c.is_control() {
+                            self.input.add(c);
+                        }
+                    }
+                    KeyCode::Left => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            self.input.jump_left();
+                        } else {
+                            self.input.shift_left(1);
+                        }
+                    }
+                    KeyCode::Right => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            self.input.jump_right();
+                        } else {
+                            self.input.shift_right(1);
+                        }
+                    }
+                    _ => {}
                 }
+                None
             }
-            KeyCode::Left => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.input.jump_left();
-                } else {
-                    self.input.shift_left(1);
-                }
-            }
-            KeyCode::Right => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.input.jump_right();
-                } else {
-                    self.input.shift_right(1);
-                }
-            }
-            _ => {}
+            // TODO: Tick graphics would be cool.
+            _ => None,
         }
     }
 
-    fn get_buffer(&self) -> String {
-        self.input.get_buffer()
+    /// Easy - explodes the string input directly into our captive widget.
+    fn set_buffer(&mut self, buf: String) -> color_eyre::Result<()> {
+        Ok(self.input.buf = buf.chars().collect())
     }
 
     fn height_hint(&self) -> u16 {
@@ -266,7 +265,6 @@ impl WidgetRef for InteractiveInput {
 /// Reads a file when given certain types of watch event. Does not visually display buffer, but does display errors.
 ///
 /// Relies on a [`notify::Watcher`] it isn't exposed to directly.
-//  TODO: Should the file I/O be hoisted up into App?
 #[derive(Default, Debug)]
 pub struct FileWatchInput {
     blinken: bool,
@@ -281,11 +279,7 @@ impl ErrorStore for FileWatchInput {
     }
 }
 
-impl BeatInput for FileWatchInput {
-    fn handle_key_event(&mut self, _event: KeyEvent) {
-        // No-op.
-    }
-
+impl FileWatchInput {
     fn tick(&mut self) {
         // It's entirely coincidence that this blinkenlight isn't a total lie:
         // the ticks come from the same event loop that poll the watcher
@@ -297,20 +291,35 @@ impl BeatInput for FileWatchInput {
             self.blinken_timer = 0;
         }
     }
+}
 
-    fn handle_watch_event(&mut self, event: notify::Event) {
-        match event.kind {
-            // TODO: FIXME: This should be more robust. Consider out of order events where we try to read a deleted file
-            // or we try to read a folder, etc.
-            notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
-                self.buffer = std::fs::read_to_string(event.paths.first().unwrap()).unwrap();
+impl BeatInput for FileWatchInput {
+    fn handle_event(&mut self, event: &Event) -> Option<AppEvent> {
+        match event {
+            Event::Tick => {
+                self.tick();
+                None
             }
-            _ => {}
+            Event::FileWatch(event) => {
+                match event.kind {
+                    // TODO: FIXME: This should be more robust. Consider out of order events where we try to read a deleted file
+                    // or we try to read a folder, etc.
+                    notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
+                        self.buffer =
+                            std::fs::read_to_string(event.paths.first().unwrap()).unwrap();
+                        return Some(AppEvent::InputReady(self.buffer.clone()));
+                    }
+                    _ => {}
+                }
+                None
+            }
+            _ => None,
         }
     }
 
-    fn get_buffer(&self) -> String {
-        self.buffer.clone()
+    /// TODO: Writes to the actual file.
+    fn set_buffer(&mut self, _buf: String) -> color_eyre::Result<()> {
+        todo!()
     }
 
     fn height_hint(&self) -> u16 {

@@ -23,7 +23,7 @@ Agents should not write commit messages. If they do anyway, then the agent SHOUL
 
 ---
 
-## Sharing State and Data Flow
+## Cross-Thread State
 The `App` and the audio backend are the two major pieces of this program. State should usually flow between these two as messages brokered by the `EventHandler` struct in `event.rs`. 
 
 App -> EventHandler -> Audio Backend
@@ -41,3 +41,6 @@ App <- EventHandler <- EventThread
 - Ticks are sent at fixed rate `TICK_FPS` which implicitly trigger an update in app, and may change widget state since it's propagated to them.
 - Crossterm events are forwarded from the crossterm poll.
 - File watch events are forwarded from the `notify::Reciever` when the user requests file watch input at startup.
+
+## UI/App State
+The `App` recieves messages from a queue in the `update` method. Some actions such as global keys are handled within `app.rs` from this method. Other messages are delegated to components stored in `src/app/`. Only `AppEvent` may mutate `App` state. Actions which need to mutate state enqueue an `AppEvent` which is processed *after* the next render.
