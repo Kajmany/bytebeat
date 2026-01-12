@@ -14,7 +14,6 @@ use crate::{
 pub mod input; // TODO: Not pretty, has to be pub so we can make it in main :(
 mod scope;
 mod ui;
-mod volume;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum View {

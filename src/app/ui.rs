@@ -1,7 +1,7 @@
 use crate::{
     App,
-    app::{View, input::BeatInput, volume},
-    audio::StreamStatus,
+    app::{View, input::BeatInput},
+    audio::{StreamStatus, Volume},
 };
 
 use ratatui::{
@@ -135,7 +135,7 @@ impl<I: BeatInput> Widget for &mut App<I> {
             .style(Style::default().add_modifier(Modifier::BOLD))
             .render(status_layout[0], buf);
 
-        volume::render(status_layout[1], buf, &self.audio_vol);
+        draw_volume(status_layout[1], buf, &self.audio_vol);
         status_block.render(main_interior[status_idx], buf);
 
         if self.show_help {
@@ -222,6 +222,26 @@ fn controls<I: BeatInput>(state: &'_ App<I>) -> Line<'_> {
     spans.push(Span::raw(" ")); // Trailing padding
 
     Line::from(spans).centered()
+}
+
+pub fn draw_volume(area: Rect, buf: &mut Buffer, state: &Volume) {
+    let label = match state.val() {
+        0.8.. => format!("🔊 {}", state),
+        0.5.. => format!("🔉 {}", state),
+        _ => format!("🔈 {}", state),
+    };
+    let ratio = state.val() as f64;
+
+    ratatui::widgets::LineGauge::default()
+        .ratio(ratio)
+        .label(label)
+        .style(Style::default().fg(Color::White))
+        .filled_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+        .render(area, buf);
 }
 
 /// helper function to create a centered rect using up certain percentage of the available rect `r`
