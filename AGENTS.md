@@ -44,3 +44,5 @@ App <- EventHandler <- EventThread
 
 ## UI/App State
 The `App` recieves messages from a queue in the `update` method. Some actions such as global keys are handled within `app.rs` from this method. Other messages are delegated to components stored in `src/app/`. Only `AppEvent` may mutate `App` state. Actions which need to mutate state enqueue an `AppEvent` which is processed *after* the next render.
+
+The `App` will call public methods on components in response to app-events to mutate their state. 

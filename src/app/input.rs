@@ -12,8 +12,7 @@ use ratatui::{
 use crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::{
-    app::{AppEvent, ui},
-    event::Event,
+    app::{AppEvent, Component, ui},
     parser::ParseError,
 };
 
@@ -24,8 +23,7 @@ trait ErrorStore {
 }
 
 #[expect(private_bounds)]
-pub trait BeatInput: WidgetRef + ErrorStore {
-    fn handle_event(&mut self, event: &Event) -> Option<AppEvent>;
+pub trait BeatInput: WidgetRef + ErrorStore + Component {
     fn set_buffer(&mut self, buf: String) -> color_eyre::Result<()>;
     fn height_hint(&self) -> u16;
 
@@ -39,6 +37,7 @@ pub trait BeatInput: WidgetRef + ErrorStore {
 }
 
 /// Extremely simple single-buffer utf-8 input widget for small texts.
+/// Widget, but not top-level component.
 ///
 /// Performs poorly with grapheme clusters (emoji, scripts, etc) but won't crash, or anything.
 #[derive(Default, Debug)]
@@ -194,43 +193,39 @@ impl ErrorStore for InteractiveInput {
     }
 }
 
-impl BeatInput for InteractiveInput {
-    fn handle_event(&mut self, event: &Event) -> Option<AppEvent> {
-        match event {
-            Event::Crossterm(crossterm::event::Event::Key(key)) => {
-                match key.code {
-                    KeyCode::Enter => return Some(AppEvent::InputReady(self.input.get_buffer())),
-                    KeyCode::Backspace => {
-                        self.input.remove();
-                    }
-                    KeyCode::Char(c) => {
-                        if !c.is_control() {
-                            self.input.add(c);
-                        }
-                    }
-                    KeyCode::Left => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            self.input.jump_left();
-                        } else {
-                            self.input.shift_left(1);
-                        }
-                    }
-                    KeyCode::Right => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            self.input.jump_right();
-                        } else {
-                            self.input.shift_right(1);
-                        }
-                    }
-                    _ => {}
-                }
-                None
+impl Component for InteractiveInput {
+    fn handle_key_event(&mut self, event: crossterm::event::KeyEvent) -> Option<AppEvent> {
+        match event.code {
+            KeyCode::Enter => return Some(AppEvent::InputReady(self.input.get_buffer())),
+            KeyCode::Backspace => {
+                self.input.remove();
             }
-            // TODO: Tick graphics would be cool.
-            _ => None,
-        }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.input.add(c);
+                }
+            }
+            KeyCode::Left => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.input.jump_left();
+                } else {
+                    self.input.shift_left(1);
+                }
+            }
+            KeyCode::Right => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.input.jump_right();
+                } else {
+                    self.input.shift_right(1);
+                }
+            }
+            _ => {}
+        };
+        None
     }
+}
 
+impl BeatInput for InteractiveInput {
     /// Easy - explodes the string input directly into our captive widget.
     fn set_buffer(&mut self, buf: String) -> color_eyre::Result<()> {
         Ok(self.input.buf = buf.chars().collect())
@@ -279,8 +274,8 @@ impl ErrorStore for FileWatchInput {
     }
 }
 
-impl FileWatchInput {
-    fn tick(&mut self) {
+impl Component for FileWatchInput {
+    fn handle_tick(&mut self) -> Option<AppEvent> {
         // It's entirely coincidence that this blinkenlight isn't a total lie:
         // the ticks come from the same event loop that poll the watcher
         // but we're supposed to panic if something in the loop breaks, so this
@@ -290,33 +285,24 @@ impl FileWatchInput {
             self.blinken = !self.blinken;
             self.blinken_timer = 0;
         }
+        None
+    }
+
+    fn handle_filewatch(&mut self, event: notify::Event) -> Option<AppEvent> {
+        match event.kind {
+            // TODO: FIXME: This should be more robust. Consider out of order events where we try to read a deleted file
+            // or we try to read a folder, etc.
+            notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
+                self.buffer = std::fs::read_to_string(event.paths.first().unwrap()).unwrap();
+                return Some(AppEvent::InputReady(self.buffer.clone()));
+            }
+            _ => {}
+        }
+        None
     }
 }
 
 impl BeatInput for FileWatchInput {
-    fn handle_event(&mut self, event: &Event) -> Option<AppEvent> {
-        match event {
-            Event::Tick => {
-                self.tick();
-                None
-            }
-            Event::FileWatch(event) => {
-                match event.kind {
-                    // TODO: FIXME: This should be more robust. Consider out of order events where we try to read a deleted file
-                    // or we try to read a folder, etc.
-                    notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
-                        self.buffer =
-                            std::fs::read_to_string(event.paths.first().unwrap()).unwrap();
-                        return Some(AppEvent::InputReady(self.buffer.clone()));
-                    }
-                    _ => {}
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
     /// TODO: Writes to the actual file.
     fn set_buffer(&mut self, _buf: String) -> color_eyre::Result<()> {
         todo!()

@@ -15,6 +15,44 @@ pub mod input; // TODO: Not pretty, has to be pub so we can make it in main :(
 mod scope;
 mod ui;
 
+/// Every widget owned by [`App`] implements this to handle delegated events
+///
+/// They should also implement a 'renderable' ratatui trait, but I won't use supertrait here
+/// because there's several possibilities.
+pub trait Component {
+    fn handle_event(&mut self, event: Event) -> Option<AppEvent> {
+        match event {
+            // These two probably aren't for us, but a component could care.
+            Event::App(_) => None,
+            Event::Audio(_) => None,
+            // Usually only care about Keydown
+            Event::Crossterm(crossterm::event::Event::Key(event))
+                if event.kind == KeyEventKind::Press =>
+            {
+                self.handle_key_event(event)
+            }
+            Event::Crossterm(_) => None,
+            Event::Tick => self.handle_tick(),
+            Event::FileWatch(event) => self.handle_filewatch(event),
+        }
+    }
+
+    #[allow(unused)]
+    fn handle_key_event(&mut self, event: KeyEvent) -> Option<AppEvent> {
+        None
+    }
+
+    #[allow(unused)]
+    fn handle_tick(&mut self) -> Option<AppEvent> {
+        None
+    }
+
+    #[allow(unused)]
+    fn handle_filewatch(&mut self, event: notify::Event) -> Option<AppEvent> {
+        None
+    }
+}
+
 #[derive(Debug, Clone)]
 /// Returned from component-specific update methods or methods of [`App`]
 /// only these events mutate state directly.
@@ -91,105 +129,105 @@ impl<I: BeatInput> App<I> {
         Ok(())
     }
 
+    /// Blocks until the next event. Upper update bound is time to tick
     fn update(&mut self) -> Result<()> {
-        let response_event: Option<AppEvent> = match self.events.next()? {
-            Event::App(event) => match event {
-                AppEvent::InputReady(code) => {
-                    self.try_beat(&code);
-                    None
-                }
-                AppEvent::BeatOverwrite(code) => {
-                    let _ = self.beat_input.set_buffer(code.clone());
-                    let _ = self.events.new_beat(&code).map_err(|e| {
+        // Some events (currently just tick) delegate to multiple components
+        let mut responses: Vec<Option<AppEvent>> = Vec::new();
+        match self.events.next()? {
+            Event::App(event) => {
+                trace!("app recieved app event: {:?}", event);
+                match event {
+                    AppEvent::InputReady(code) => {
+                        self.try_beat(&code);
+                    }
+                    AppEvent::BeatOverwrite(code) => {
+                        let _ = self.beat_input.set_buffer(code.clone());
+                        let _ = self.events.new_beat(&code).map_err(|e| {
                         error!(
                             "library sent a hardcoded beat that had an error (embarrassing): {e:?}"
                         )
                     });
-                    None
-                }
-                AppEvent::VolumeUp => {
-                    self.incr_volume();
-                    None
-                }
-                AppEvent::VolumeDown => {
-                    self.decr_volume();
-                    None
-                }
-                AppEvent::Quit => {
-                    self.quit();
-                    None
-                }
-                AppEvent::TogglePlay => {
-                    self.toggle_playback();
-                    None
-                }
-                AppEvent::ChangeView(view) => {
-                    self.view = view;
-                    None
-                }
-                AppEvent::ToggleHelp => {
-                    self.show_help = !self.show_help;
-                    None
-                }
-                AppEvent::ViewBack => {
-                    if self.show_help {
-                        self.show_help = false;
-                    } else {
-                        self.view = View::Main;
                     }
-                    None
-                }
-            },
-            Event::Crossterm(event) => match event {
-                crossterm::event::Event::Key(event) if event.kind == KeyEventKind::Press => {
-                    trace!("app handling crossterm event: {:?}", event);
-                    self.handle_key_event(event)
-                }
-                _ => None,
-            },
+                    AppEvent::VolumeUp => {
+                        self.incr_volume();
+                    }
+                    AppEvent::VolumeDown => {
+                        self.decr_volume();
+                    }
+                    AppEvent::Quit => {
+                        self.quit();
+                    }
+                    AppEvent::TogglePlay => {
+                        self.toggle_playback();
+                    }
+                    AppEvent::ChangeView(view) => {
+                        self.view = view;
+                    }
+                    AppEvent::ToggleHelp => {
+                        self.show_help = !self.show_help;
+                    }
+                    AppEvent::ViewBack => {
+                        if self.show_help {
+                            self.show_help = false;
+                        } else {
+                            self.view = View::Main;
+                        }
+                    }
+                };
+            }
+            Event::Crossterm(event) => {
+                trace!("app handling crossterm event: {:?}", event);
+                responses.push(self.handle_crossterm_event(event));
+            }
             Event::Audio(AudioEvent::StateChange(event)) => {
                 info!("app recieved audio state change: {:?}", event);
                 self.audio_state = event;
-                None
             }
             Event::Tick => {
                 // Must run even when not shown to keep emptying rtrb
-                self.scope.update();
+                responses.push(self.scope.handle_event(Event::Tick));
                 // For visuals in component
-                self.beat_input.handle_event(&Event::Tick)
+                responses.push(self.beat_input.handle_event(Event::Tick));
             }
-            Event::FileWatch(event) => self.beat_input.handle_event(&Event::FileWatch(event)),
+            Event::FileWatch(event) => {
+                // One actual action is often many of these
+                trace!("app recieved file watch event: {:?}", event);
+                responses.push(self.beat_input.handle_event(Event::FileWatch(event)))
+            }
         };
 
-        if let Some(event) = response_event {
-            self.events.enqueue_app_event(event);
-        }
+        responses
+            .into_iter()
+            .flatten()
+            .for_each(|e| self.events.enqueue_app_event(e));
         Ok(())
     }
 
-    fn handle_key_event(&mut self, event: KeyEvent) -> Option<AppEvent> {
-        // Global keys
-        match event.code {
-            KeyCode::F(1) => Some(AppEvent::ToggleHelp),
-            KeyCode::F(2) => Some(AppEvent::ChangeView(View::BigLog)),
-            KeyCode::F(3) => Some(AppEvent::Quit),
-            KeyCode::F(4) => Some(AppEvent::TogglePlay),
-            KeyCode::F(5) => Some(AppEvent::ChangeView(View::Library)),
-            KeyCode::Esc => Some(AppEvent::ViewBack),
-            KeyCode::Up => Some(AppEvent::VolumeUp),
-            KeyCode::Down => Some(AppEvent::VolumeDown),
+    fn handle_crossterm_event(&mut self, event: crossterm::event::Event) -> Option<AppEvent> {
+        // Handle global keys now
+        if let crossterm::event::Event::Key(key) = event {
+            if key.kind == KeyEventKind::Press {
+                if let Some(resp) = match key.code {
+                    KeyCode::F(1) => Some(AppEvent::ToggleHelp),
+                    KeyCode::F(2) => Some(AppEvent::ChangeView(View::BigLog)),
+                    KeyCode::F(3) => Some(AppEvent::Quit),
+                    KeyCode::F(4) => Some(AppEvent::TogglePlay),
+                    KeyCode::F(5) => Some(AppEvent::ChangeView(View::Library)),
+                    KeyCode::Esc => Some(AppEvent::ViewBack),
+                    KeyCode::Up => Some(AppEvent::VolumeUp),
+                    KeyCode::Down => Some(AppEvent::VolumeDown),
+                    _ => None,
+                } {
+                    return Some(resp);
+                }
+            }
+        }
 
-            // Pass-through to components depending on view
-            _ => match self.view {
-                View::Main => self
-                    .beat_input
-                    // Oh wow this is ugly
-                    .handle_event(&Event::Crossterm(crossterm::event::Event::Key(event))),
-                View::Library => self
-                    .library
-                    .handle_event(&Event::Crossterm(crossterm::event::Event::Key(event))),
-                View::BigLog => None,
-            },
+        // Or delegate to relevant component
+        match self.view {
+            View::Main => self.beat_input.handle_event(Event::Crossterm(event)),
+            View::Library => self.library.handle_event(Event::Crossterm(event)),
+            View::BigLog => None,
         }
     }
 

@@ -14,6 +14,8 @@ use ratatui::{
     widgets::{Axis, Block, BorderType, Chart, Dataset, GraphType, Widget},
 };
 
+use crate::app::Component;
+
 /// How many samples we display on one chart
 const CHART_SAMPLES: usize = 32000;
 
@@ -32,19 +34,8 @@ pub struct Scope {
     t_chart_head: i32,
 }
 
-impl Scope {
-    pub fn new(consumer: rtrb::Consumer<u8>, t_play: &'static AtomicI32) -> Self {
-        Self {
-            consumer,
-            t_read: 0,
-            t_play,
-            intermediate_queue: VecDeque::with_capacity(4096),
-            chart_buffer: VecDeque::with_capacity(CHART_SAMPLES),
-            t_chart_head: -1,
-        }
-    }
-
-    pub fn update(&mut self) {
+impl Component for Scope {
+    fn handle_tick(&mut self) -> Option<super::AppEvent> {
         // Pop all available samples
         // TODO: This could be done with chunks, maybe faster. probably doesn't matter
         while let Ok(sample) = self.consumer.pop() {
@@ -74,10 +65,14 @@ impl Scope {
                 }
             }
         }
-    }
 
-    pub fn render(&mut self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        // Optimize: use make_contiguous to get a slice for the Chart without allocation
+        None
+    }
+}
+
+impl Widget for &mut Scope {
+    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        // Mutating optimization: use make_contiguous to get a slice for the Chart without allocation
         self.chart_buffer.make_contiguous();
         let (data, _) = self.chart_buffer.as_slices();
 
@@ -118,5 +113,18 @@ impl Scope {
                     .bounds([0.0, 255.0]),
             );
         chart.render(area, buf);
+    }
+}
+
+impl Scope {
+    pub fn new(consumer: rtrb::Consumer<u8>, t_play: &'static AtomicI32) -> Self {
+        Self {
+            consumer,
+            t_read: 0,
+            t_play,
+            intermediate_queue: VecDeque::with_capacity(4096),
+            chart_buffer: VecDeque::with_capacity(CHART_SAMPLES),
+            t_chart_head: -1,
+        }
     }
 }
