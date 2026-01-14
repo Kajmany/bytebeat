@@ -1,3 +1,4 @@
+//! Top-level render code. Limited state mutation (in some components only)
 use crate::{
     App,
     app::{View, input::BeatInput},
@@ -21,7 +22,6 @@ pub const MAX_ERRORS_SHOWN: usize = 3;
 const HELP_TEXT: &[&str] = &[
     "Controls:",
     "  Esc: Close Help or return to Main",
-    "    - (May also repeat key to close Help/View)",
     "  F1: Help",
     "  F2: Log",
     "  F3: Quit",
@@ -36,6 +36,11 @@ const HELP_TEXT: &[&str] = &[
     "  Left/Right: Move cursor",
     "  Ctrl+Left/Right: Jump words",
     "  Enter: Compile and play beat",
+    "",
+    "Library:",
+    "  Enter: Select song on page - over-writes input buffer",
+    "  0-9-a-z-A-Z: 'Sample' song on page - doesn't over-write buffer",
+    "  Left/Right: Move pages",
 ];
 
 impl<I: BeatInput> Widget for &mut App<I> {
@@ -95,9 +100,7 @@ impl<I: BeatInput> Widget for &mut App<I> {
                     .render(main_interior[0], buf);
             }
             View::Library => {
-                Paragraph::new("Placeholder for Library")
-                    .block(Block::bordered().title(" Library "))
-                    .render(main_interior[0], buf);
+                (&mut self.library).render(main_interior[0], buf);
             }
             View::Main => {
                 self.scope.render(main_interior[0], buf);

@@ -19,6 +19,8 @@ use crate::{
 mod app;
 mod audio;
 mod event;
+// Generated from CSV
+mod library_data;
 mod parser;
 
 use clap::{Parser, builder::ArgPredicate};

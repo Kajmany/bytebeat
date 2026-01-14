@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub mod input; // TODO: Not pretty, has to be pub so we can make it in main :(
+mod library;
 mod scope;
 mod ui;
 
@@ -96,6 +97,7 @@ pub struct App<I: BeatInput> {
     // TODO: undo/redo system shouldn't be that hard. later.
     beat_input: I,
     scope: scope::Scope,
+    library: library::Library,
     view: View,
     /// We can draw the help modal with (over) any view
     show_help: bool,
@@ -116,6 +118,7 @@ impl<I: BeatInput> App<I> {
             audio_vol: Volume::default(),
             beat_input,
             scope: scope::Scope::new(consumer, t_play),
+            library: library::Library::new(),
             view: View::Main,
             show_help: false,
         }
