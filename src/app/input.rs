@@ -1,5 +1,8 @@
 //! Contains 'inputs' which hold potential beats as strings.
 //!
+//! These components usually push their content in response to delegated events. The app may
+//! also pull the content using the trait for usages not immediately demanded by the user.
+//!
 //! The stdio-interactive input and file watcher ''input'' are both barbarically forced to implement
 //! the same trait [`BeatInput`].
 use ratatui::{
@@ -25,6 +28,8 @@ trait ErrorStore {
 #[expect(private_bounds)]
 pub trait BeatInput: WidgetRef + ErrorStore + Component {
     fn set_buffer(&mut self, buf: String) -> color_eyre::Result<()>;
+    /// For when the [`App`] needs to pull. Should generally push in response to event
+    fn get_buffer(&self) -> String;
     fn height_hint(&self) -> u16;
 
     fn clear_errors(&mut self) {
@@ -231,6 +236,10 @@ impl BeatInput for InteractiveInput {
         Ok(self.input.buf = buf.chars().collect())
     }
 
+    fn get_buffer(&self) -> String {
+        self.input.get_buffer()
+    }
+
     fn height_hint(&self) -> u16 {
         // 2 for the block, 1 for the LineInput, up to n errors + 1 'n more...'
         (2 + 1 + self.errors.len().min(ui::MAX_ERRORS_SHOWN + 1)) as u16
@@ -306,6 +315,11 @@ impl BeatInput for FileWatchInput {
     /// TODO: Writes to the actual file.
     fn set_buffer(&mut self, _buf: String) -> color_eyre::Result<()> {
         todo!()
+    }
+
+    // TODO: Can this get desynced?
+    fn get_buffer(&self) -> String {
+        self.buffer.clone()
     }
 
     fn height_hint(&self) -> u16 {

@@ -141,9 +141,15 @@ impl<I: BeatInput> App<I> {
                 trace!("app recieved app event: {:?}", event);
                 match event {
                     AppEvent::InputReady(code) => {
+                        if self.paused {
+                            self.toggle_playback();
+                        }
                         self.try_beat(&code);
                     }
                     AppEvent::BeatOverwrite(code) => {
+                        if self.paused {
+                            self.toggle_playback();
+                        }
                         let _ = self.beat_input.set_buffer(code.clone());
                         let _ = self.events.new_beat(&code).map_err(|e| {
                         error!(
@@ -164,7 +170,7 @@ impl<I: BeatInput> App<I> {
                         self.toggle_playback();
                     }
                     AppEvent::ChangeView(view) => {
-                        self.view = view;
+                        self.change_view(view);
                     }
                     AppEvent::ToggleHelp => {
                         self.show_help = !self.show_help;
@@ -173,7 +179,7 @@ impl<I: BeatInput> App<I> {
                         if self.show_help {
                             self.show_help = false;
                         } else {
-                            self.view = View::Main;
+                            self.change_view(View::Main);
                         }
                     }
                 };
@@ -232,6 +238,15 @@ impl<I: BeatInput> App<I> {
             View::Library => self.library.handle_event(Event::Crossterm(event)),
             View::BigLog => None,
         }
+    }
+
+    fn change_view(&mut self, view: View) {
+        // We're leaving the library and may have a 'sample' playing
+        // So we need to pull from the buffer to over-write it @ backend
+        if self.view == View::Library {
+            self.try_beat(&self.beat_input.get_buffer());
+        }
+        self.view = view;
     }
 
     /// Sync with actual stream state absolutely not guaranteed.
