@@ -1,4 +1,6 @@
 //! Pipewire backend for Linux. Uses the stream API. Mostly uses safe bindings.
+//!
+//! TODO: May need to handle device {un,re}plugging like in WASAPI?
 use std::{
     mem,
     sync::{
@@ -6,7 +8,6 @@ use std::{
         atomic::{AtomicI32, Ordering},
         mpsc,
     },
-    time::Duration,
 };
 
 use arc_swap::ArcSwap;
@@ -21,7 +22,7 @@ use pipewire::{
 use pw::properties::properties;
 use tracing::{error, info, trace, warn};
 
-use super::{AudioCommand, AudioEvent, CHANNELS, STRIDE, StreamStatus, Volume};
+use super::{AudioCommand, AudioEvent, BITRATE, CHANNELS, STRIDE, StreamStatus, Volume};
 use crate::{event::Event, parser};
 
 // None of these structs are necessary. They're hopefully optimized out
@@ -88,7 +89,7 @@ pub fn main(
     // Used in a few callbacks
     static T_WRITE: AtomicI32 = AtomicI32::new(0);
     static BEAT: LazyLock<ArcSwap<parser::Beat>> =
-        // TODO: Make this default beat configurable
+        // 'Silent' beat by default
         LazyLock::new(|| ArcSwap::new(Arc::new(parser::Beat::default())));
     // See struct declarations
     let sts = StateChangeState::new(event_tx);
@@ -116,10 +117,7 @@ pub fn main(
         let head = estimate_play_head(&ts.stream, ts.t_write.load(Ordering::Relaxed));
         ts.t_play.store(head, Ordering::Relaxed);
     });
-    t_sync_timer.update_timer(
-        Some(Duration::from_millis(100)),
-        Some(Duration::from_millis(100)),
-    );
+    t_sync_timer.update_timer(Some(super::T_SYNC_INTERVAL), Some(super::T_SYNC_INTERVAL));
 
     let _listener = stream
         .add_local_listener_with_user_data(ps)
@@ -147,7 +145,7 @@ pub fn main(
     use spa::param::audio;
     let mut audio_info = audio::AudioInfoRaw::new();
     audio_info.set_format(audio::AudioFormat::U8);
-    audio_info.set_rate(8000);
+    audio_info.set_rate(BITRATE as u32);
     audio_info.set_channels(CHANNELS as u32);
     let mut position = [0; audio::MAX_CHANNELS];
     position[0] = libspa_sys::SPA_AUDIO_CHANNEL_FL;

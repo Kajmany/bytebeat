@@ -4,15 +4,26 @@ mod wasapi;
 #[cfg(target_os = "linux")]
 mod pipewire;
 
+use std::time::Duration;
+
 use crate::parser;
 
+/// Hertz
+pub const BITRATE: usize = 8000;
+/// Discrete
 pub const CHANNELS: usize = 2;
+/// Bytes
 pub const STRIDE: usize = size_of::<u8>() * CHANNELS;
+/// How often to sync/estimate the play head for Scope widget's benefit
+///
+/// Effectively more of a "no sooner than" than a "every X"
+pub const T_SYNC_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Wrapped float that can represent no volume [`Volume::MUTE`] or
 /// normal (not amplified) volume [`Volume::MAX`].
-/// Same range as [`libspa_sys::SPA_PROP_volume`]
+///
+/// This is the same allowable range for Pipewire and WASAPI.
 pub struct Volume(f32);
 
 impl Default for Volume {
@@ -50,7 +61,8 @@ pub enum AudioEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// Remapping of [`::pipewire::stream::StreamState`] that can be cloned.
+/// Originally a remapping of [`::pipewire::stream::StreamState`] that can be cloned.
+/// shoe-horned into working for WASAPI too.
 pub enum StreamStatus {
     /// the stream is in error
     Error,
