@@ -61,7 +61,15 @@ Dubious. This repository contains songs/'codes' which I do not own the copyright
 - `src/parser/generate_references.c`
 - `src/parser.rs` (test module)
 
-All of these are widely available and this list is scraped from the [dollchan composer library](https://github.com/SthephanShinkufag/bytebeat-composer/tree/master/data/library) classic archive.
+All of these are widely available and this list is scraped from the [dollchan composer library classic archive](https://github.com/SthephanShinkufag/bytebeat-composer/blob/62d3fe8bb397133f1adab0aa87bccf8aaee75a1a/data/library/classic.gz). `jq` was used to convert the library into a CSV:
+```
+jq -r '["author","name","description","code"],
+                                          (.[] | .author as $author | .songs[] | 
+                                            select(.sampleRate == 8000) |
+                                            [$author, .name // "", .description // "", (.code // .codeMin)]
+                                          ) | @csv' classic
+```
+Claude did this, and I will probably never learn the language. Note we lose quite a few songs that aren't at 8khz. Afterwards, the bash script `enforce_c_compat.sh` was used to compile every entry with `cc`. Those that failed were removed.
 
 # LLM Usage
 Source modules which approach cognitohazard level of LLM usage are marked with a doc comment, but otherwise mostly everywhere to varying extents. This README, all doc-comments, and most code comments are entirely from the heart and written with human intention.
