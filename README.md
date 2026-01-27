@@ -69,7 +69,7 @@ jq -r '["author","name","description","code"],
                                             [$author, .name // "", .description // "", (.code // .codeMin)]
                                           ) | @csv' classic
 ```
-Claude did this, and I will probably never learn the language. Note we lose quite a few songs that aren't at 8khz. Afterwards, the bash script `enforce_c_compat.sh` was used to compile every entry with `cc`. Those that failed were removed.
+Claude did this, and I will probably never learn the language. Note we lose quite a few songs that aren't at 8khz. Afterwards, the bash script `enforce_c_compat.sh` was used to compile and sample every entry with `cc`. Those that failed to compile or crashed (SIGFPE) were removed.
 
 # LLM Usage
 Source modules which approach cognitohazard level of LLM usage are marked with a doc comment, but otherwise mostly everywhere to varying extents. This README, all doc-comments, and most code comments are entirely from the heart and written with human intention.

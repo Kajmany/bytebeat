@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# Script to check C compatibility of bytebeat songs in library.csv
+# Script to check C compatibility of bytebeat songs in <argument> csv or library.csv
 #
-# Attempts to compile each song from CSV, reports failures and can remove from the library.
-# Originally slopped and not the prettiest parsing/editing, but I removed some nonsense like making temp files for each compilation
+# Attempts to compile each song from CSV, and then take 2**16 samples
+# reports failures and can remove from the library.
+#
+# Originally slopped and not the prettiest parsing/editing.
+# TODO: it'd be nice to know the 't' value that causes a crash but that's a lot more work
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CSV_FILE="${SCRIPT_DIR}/library.csv"
+CSV_FILE="${1:-${SCRIPT_DIR}/library.csv}"
 OUTPUT_FILE="${SCRIPT_DIR}/c_compat_failures.txt"
 
 # Clear the output file
 > "$OUTPUT_FILE"
+
+# Create a temporary directory for executables
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
 
 echo "Checking C compatibility of songs in ${CSV_FILE}..."
 echo "Results will be written to ${OUTPUT_FILE}"
@@ -44,19 +52,65 @@ while IFS= read -r line; do
     name=$(echo "$line" | cut -d'"' -f4)
     author=$(echo "$line" | cut -d'"' -f2)
     
-    # Try to compile by piping C source directly to compiler
-    if ! error_output=$(cc -std=c99 -Wall -Wextra -fsyntax-only -x c - 2>&1 <<EOF
-#include <stdint.h>
+    # Compile and run
+    TMP_EXE="${TMP_DIR}/test_${line_num}"
+    
+    # Construct C source
+    c_source="#include <stdint.h>
+#include <stdio.h>
 
 uint8_t song(int t) {
     return (${code});
 }
 
 int main(void) {
+    for (int t = 0; t < 65536; t++) {
+        volatile uint8_t out = song(t);
+        (void)out;
+    }
     return 0;
-}
-EOF
-); then
+}"
+
+    # Try to compile
+    if compile_out=$(echo "$c_source" | cc -std=c99 -Wall -Wextra -o "$TMP_EXE" -x c - 2>&1); then
+        # Compile succeeded, now try to run
+        run_exit_code=0
+        run_out=$("$TMP_EXE" 2>&1) || run_exit_code=$?
+        
+        if [[ $run_exit_code -ne 0 ]]; then
+            # Runtime failure
+            ((fail_count++)) || true
+            failed_lines+=("$line_num")
+            
+            echo "=== Line $line_num ===" >> "$OUTPUT_FILE"
+            echo "Author: $author" >> "$OUTPUT_FILE"
+            echo "Name: $name" >> "$OUTPUT_FILE"
+            echo "Code: $code" >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
+            echo "Runtime Failure:" >> "$OUTPUT_FILE"
+            
+            if [[ $run_exit_code -gt 128 ]]; then
+                echo "Terminated by Signal: $(kill -l $run_exit_code)" >> "$OUTPUT_FILE"
+            else
+                echo "Exit Code: $run_exit_code" >> "$OUTPUT_FILE"
+            fi
+            
+            if [[ -n "$run_out" ]]; then
+                echo "Output:" >> "$OUTPUT_FILE"
+                echo "$run_out" >> "$OUTPUT_FILE"
+            fi
+
+            echo "" >> "$OUTPUT_FILE"
+            echo "---" >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
+            
+            echo "FAIL (Runtime): Line $line_num - ${author:-(unknown)}: ${name:-(untitled)}"
+        else
+            # Success
+            ((success_count++)) || true
+        fi
+    else
+        # Compile failure
         ((fail_count++)) || true
         failed_lines+=("$line_num")
         
@@ -65,15 +119,13 @@ EOF
         echo "Name: $name" >> "$OUTPUT_FILE"
         echo "Code: $code" >> "$OUTPUT_FILE"
         echo "" >> "$OUTPUT_FILE"
-        echo "Compiler errors:" >> "$OUTPUT_FILE"
-        echo "$error_output" >> "$OUTPUT_FILE"
+        echo "Compiler Error:" >> "$OUTPUT_FILE"
+        echo "$compile_out" >> "$OUTPUT_FILE"
         echo "" >> "$OUTPUT_FILE"
         echo "---" >> "$OUTPUT_FILE"
         echo "" >> "$OUTPUT_FILE"
         
-        echo "FAIL: Line $line_num - ${author:-(unknown)}: ${name:-(untitled)}"
-    else
-        ((success_count++)) || true
+        echo "FAIL (Compile): Line $line_num - ${author:-(unknown)}: ${name:-(untitled)}"
     fi
     
 done < "$CSV_FILE"
@@ -92,7 +144,7 @@ echo "Failure details written to: $OUTPUT_FILE"
 if [[ ${#failed_lines[@]} -gt 0 ]]; then
     echo ""
     echo "Would you like to remove the ${#failed_lines[@]} non-C-compatible songs from library.csv?"
-    echo "A backup will be created at library.csv.bak"
+    echo "A backup will be created at ${CSV_FILE}.bak"
     read -rp "Remove failed songs? [y/N]: " response
     
     if [[ "$response" =~ ^[Yy]$ ]]; then
