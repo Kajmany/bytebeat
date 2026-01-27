@@ -10,8 +10,7 @@ use std::ops::Deref;
 
 use self::parse::Parser;
 
-// Only an error path does a copy
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     /// Must be 't'
     Variable,
@@ -145,8 +144,10 @@ pub enum ParseError {
 
 /// Span is NOT attached because these errors are either in a [`Token::Err`]`
 /// or in a [`ParseError::LexError`] which carries the relevant [`Span`]
-#[derive(Error, Debug, PartialEq, Clone, Copy)]
+#[derive(Error, Debug, PartialEq, Clone)]
 pub enum LexError {
+    #[error("Expected valid base {0} number: {1}")]
+    ImproperNumber(i8, std::num::ParseIntError),
     #[error("Assignment or single = not supported")]
     SolitaryEquals,
     #[error("Unexpected character: {0}")]

@@ -31,6 +31,7 @@ In fact, several good reasons exist for not doing so, but I ignored them.
     - Ternary: `? :`
     - Variable: Just `t` for time!
     - Ordering: `( )`
+    - Numbers: Bases 2, 8, 10, 16 with C-prefixes `0b10101` `0407` `1337` `0xDEADBEEF`
     - NOT SUPPORTED: Array creation, floats (as input OR output), functions (including math.h)...
 - True-to-C evaluation: According to my system's compiler, because the tests compare samples to those generated in C with the same bytebeat codes. I might be missing edge cases, but every operator is represented at least once in testing.
 - Lexer/Parser Recovery & Positionally-aware Errors: Attempts to deliver all errors and their column occurance at once upon failed compilation.

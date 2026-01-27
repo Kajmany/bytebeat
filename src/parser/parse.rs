@@ -132,7 +132,13 @@ impl<'a, 'b> Parser<'a, 'b> {
                     // this is best-effort to getting all errors we can at once
                     break;
                 }
-                t => return Err(ParseError::ExpectedOperator(t.clone(), self.current.span)),
+                ref t => {
+                    // Need to clone state on this path to send a rich error
+                    return Err(ParseError::ExpectedOperator(
+                        t.clone(),
+                        self.current.span.clone(),
+                    ));
+                }
             };
 
             // Postfix ?
